@@ -89,6 +89,10 @@ app.get('/health', { schema: { tags: ['System'], summary: 'Health check',
   response: { 200: { type: 'object', properties: { status: { type: 'string' }, timestamp: { type: 'string' } } } }
 } }, async (req, rep) => proxy(CB_SERVICE, req, rep));
 
+// Non-prefixed aliases for cross-bank interoperability (branch-bank spec paths are relative to bank address)
+app.get('/accounts/:accountNumber', { schema: false as any }, async (req, rep) => proxy(ACCOUNT_SERVICE, { ...req, url: `/api/v1${req.url}` } as any, rep));
+app.post('/transfers/receive', { schema: false as any }, async (req, rep) => proxy(TRANSFER_SERVICE, { ...req, url: `/api/v1${req.url}` } as any, rep));
+
 // Fix #4: apiKey documented in response description + x-api-key header noted
 app.post('/api/v1/users', { schema: { tags: ['Users'], summary: 'Register a new user',
   description: 'Registers a new user. API key is returned in the X-API-Key response header. Use it with POST /auth/tokens to get a Bearer token.',
