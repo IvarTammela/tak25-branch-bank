@@ -178,12 +178,18 @@ const attemptDelivery = async (
     throw new AppError(503, 'BANK_NOT_REGISTERED', 'Bank registration with the central bank is not ready yet');
   }
 
-  const destinationBank = getBankById(db, transfer.destination_bank_id ?? '') ?? getBankByPrefix(db, transfer.destination_account.slice(0, 3));
-  if (!destinationBank) {
-    await getBankDirectoryWithFallback(db, config);
+  if (!transfer.destination_bank_id) {
+    const updatedAt = new Date().toISOString();
+    refundTransfer(db, transfer, 'failed', 'Transfer is missing destination bank ID', updatedAt);
+    throw new AppError(500, 'INTERNAL_ERROR', 'Transfer is missing destination bank ID');
   }
 
-  const resolvedBank = getBankById(db, transfer.destination_bank_id ?? '') ?? getBankByPrefix(db, transfer.destination_account.slice(0, 3));
+  let resolvedBank = getBankById(db, transfer.destination_bank_id);
+  if (!resolvedBank) {
+    await getBankDirectoryWithFallback(db, config);
+    resolvedBank = getBankById(db, transfer.destination_bank_id);
+  }
+
   if (!resolvedBank) {
     const updatedAt = new Date().toISOString();
     refundTransfer(db, transfer, 'failed', `Destination bank for prefix '${transfer.destination_account.slice(0, 3)}' was not found`, updatedAt);
@@ -244,6 +250,10 @@ export const createTransfer = async (
 ) => {
   ensureValidAccountNumber(input.sourceAccount, 'sourceAccount');
   ensureValidAccountNumber(input.destinationAccount, 'destinationAccount');
+
+  if (input.sourceAccount === input.destinationAccount) {
+    throw new AppError(400, 'INVALID_REQUEST', 'Source and destination accounts must be different');
+  }
 
   const existing = getTransferById(db, input.transferId);
   if (existing) {
@@ -411,7 +421,7 @@ export const createTransfer = async (
     return buildTransferResponse(delivered);
   } catch (error) {
     if (error instanceof AppError && error.code === 'DESTINATION_BANK_UNAVAILABLE') {
-      throw error;
+      return buildTransferResponse(getTransferById(db, pendingTransfer.transfer_id)!);
     }
 
     throw error;
@@ -425,10 +435,6 @@ export const getTransferStatus = (db: SqliteDatabase, transferId: string, userId
   }
 
   assertTransferOwnership(db, transfer, userId);
-
-  if (transfer.status === 'failed_timeout') {
-    throw new AppError(423, 'TRANSFER_TIMEOUT', 'Transfer has timed out and cannot be modified or retried. Status is failed_timeout with refund processed.');
-  }
 
   return buildTransferResponse(transfer);
 };
@@ -470,7 +476,7 @@ export const receiveTransfer = async (db: SqliteDatabase, config: AppConfig, jwt
   }
 
   const existing = getTransferById(db, claims.transferId);
-  if (existing?.status === 'completed') {
+  if (existing) {
     return {
       transferId: existing.transfer_id,
       status: existing.status,

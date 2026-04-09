@@ -24,7 +24,7 @@ import {
 import { AppError, isAppError, toErrorBody } from './errors.js';
 import type { KeyPair } from './keys.js';
 import { ensureKeyPair } from './keys.js';
-import { formatMoney } from './money.js';
+import { formatMoney, parseMoney } from './money.js';
 import { createTransfer, getTransferStatus, receiveTransfer } from './transfers.js';
 
 const registrationSchema = z.object({
@@ -395,7 +395,7 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
       throw new AppError(403, 'FORBIDDEN', 'You can only deposit to your own accounts');
     }
 
-    const amountMinor = Number.parseInt(body.amount.replace('.', ''), 10);
+    const amountMinor = parseMoney(body.amount);
     adjustAccountBalance(db, account.account_number, amountMinor);
     const updated = getAccountByNumber(db, account.account_number)!;
 

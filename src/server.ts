@@ -49,19 +49,19 @@ const runWorkerCycle = async () => {
 await runWorkerCycle();
 
 setInterval(async () => {
-  try { await sendHeartbeat(db, config); } catch { /* logged */ }
+  try { await sendHeartbeat(db, config); } catch (error) { console.error('heartbeat failed', (error as Error).message); }
 }, config.heartbeatIntervalMs);
 
 setInterval(async () => {
-  try { await refreshBankDirectory(db, config); } catch { /* logged */ }
+  try { await refreshBankDirectory(db, config); } catch (error) { console.error('directory sync failed', (error as Error).message); }
 }, config.directorySyncIntervalMs);
 
 setInterval(async () => {
-  try { await refreshExchangeRates(db, config); } catch { /* logged */ }
+  try { await refreshExchangeRates(db, config); } catch (error) { console.error('exchange rates failed', (error as Error).message); }
 }, config.directorySyncIntervalMs);
 
 setInterval(async () => {
-  try { await processPendingTransfers(db, config, keys); } catch { /* logged */ }
+  try { await processPendingTransfers(db, config, keys); } catch (error) { console.error('pending transfers failed', (error as Error).message); }
 }, config.retryPollIntervalMs);
 
 console.log('Server + worker running');

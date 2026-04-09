@@ -17,7 +17,16 @@ export const parseMoney = (value: string) => {
   }
 
   const [whole, fraction] = value.split('.');
-  return Number.parseInt(whole, 10) * 100 + Number.parseInt(fraction, 10);
+  if (whole.length > 13) {
+    throw new AppError(400, 'INVALID_REQUEST', 'Amount is too large');
+  }
+
+  const result = Number.parseInt(whole, 10) * 100 + Number.parseInt(fraction, 10);
+  if (result <= 0) {
+    throw new AppError(400, 'INVALID_AMOUNT', 'Amount must be greater than zero');
+  }
+
+  return result;
 };
 
 export const formatMoney = (minor: number) => {
