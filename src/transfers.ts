@@ -7,6 +7,7 @@ import {
   getAccountByNumber,
   getBankById,
   getBankByPrefix,
+  getBanksByPrefix,
   getIdentity,
   listDuePendingTransfers,
   getTransferById,
@@ -277,13 +278,9 @@ export const createTransfer = async (
   }
 
   const now = new Date().toISOString();
-  const isLocalDestination = input.destinationAccount.startsWith(identity.bank_prefix);
+  const localDestination = getAccountByNumber(db, input.destinationAccount);
 
-  if (isLocalDestination) {
-    const destinationAccount = getAccountByNumber(db, input.destinationAccount);
-    if (!destinationAccount) {
-      throw new AppError(404, 'ACCOUNT_NOT_FOUND', `Account with number '${input.destinationAccount}' not found`);
-    }
+  if (localDestination) {
 
     let resolvedConversion: { convertedMinor: number; exchangeRate: string; rateCapturedAt: string | null } = {
       convertedMinor: amountMinor,
@@ -291,9 +288,9 @@ export const createTransfer = async (
       rateCapturedAt: null
     };
 
-    if (sourceAccount.currency !== destinationAccount.currency) {
+    if (sourceAccount.currency !== localDestination.currency) {
       const snapshot = await getExchangeRatesWithFallback(db, config);
-      const converted = convertMoney(amountMinor, sourceAccount.currency, destinationAccount.currency, snapshot);
+      const converted = convertMoney(amountMinor, sourceAccount.currency, localDestination.currency, snapshot);
       resolvedConversion = {
         ...converted,
         rateCapturedAt: snapshot.timestamp
@@ -305,14 +302,14 @@ export const createTransfer = async (
       direction: 'outgoing',
       status: 'completed',
       source_account: sourceAccount.account_number,
-      destination_account: destinationAccount.account_number,
+      destination_account: localDestination.account_number,
       amount_minor: amountMinor,
       amount_currency: sourceAccount.currency,
       source_currency: sourceAccount.currency,
-      destination_currency: destinationAccount.currency,
-      converted_amount_minor: sourceAccount.currency === destinationAccount.currency ? null : resolvedConversion.convertedMinor,
-      exchange_rate: sourceAccount.currency === destinationAccount.currency ? null : resolvedConversion.exchangeRate,
-      rate_captured_at: sourceAccount.currency === destinationAccount.currency ? null : resolvedConversion.rateCapturedAt,
+      destination_currency: localDestination.currency,
+      converted_amount_minor: sourceAccount.currency === localDestination.currency ? null : resolvedConversion.convertedMinor,
+      exchange_rate: sourceAccount.currency === localDestination.currency ? null : resolvedConversion.exchangeRate,
+      rate_captured_at: sourceAccount.currency === localDestination.currency ? null : resolvedConversion.rateCapturedAt,
       error_message: null,
       initiated_by_user_id: userId,
       pending_since: null,
@@ -327,7 +324,7 @@ export const createTransfer = async (
 
     const transaction = db.transaction(() => {
       const latestSource = getAccountByNumber(db, sourceAccount.account_number);
-      const latestDestination = getAccountByNumber(db, destinationAccount.account_number);
+      const latestDestination = getAccountByNumber(db, localDestination.account_number);
       if (!latestSource || !latestDestination) {
         throw new AppError(404, 'ACCOUNT_NOT_FOUND', 'Transfer account is missing');
       }
@@ -347,12 +344,34 @@ export const createTransfer = async (
 
   await getBankDirectoryWithFallback(db, config);
 
-  const destinationBank = getBankByPrefix(db, input.destinationAccount.slice(0, 3));
-  if (!destinationBank) {
-    throw new AppError(404, 'BANK_NOT_FOUND', `Destination bank for prefix '${input.destinationAccount.slice(0, 3)}' was not found`);
+  const prefix = input.destinationAccount.slice(0, 3);
+  const candidateBanks = getBanksByPrefix(db, prefix, identity.bank_id);
+  if (candidateBanks.length === 0) {
+    throw new AppError(404, 'BANK_NOT_FOUND', `Destination bank for prefix '${prefix}' was not found`);
   }
 
-  const remoteAccount = await lookupRemoteAccount(destinationBank.address, input.destinationAccount);
+  let destinationBank: typeof candidateBanks[0] | undefined;
+  let remoteAccount: RemoteLookupResponse | undefined;
+
+  for (const candidate of candidateBanks) {
+    try {
+      remoteAccount = await lookupRemoteAccount(candidate.address, input.destinationAccount);
+      destinationBank = candidate;
+      break;
+    } catch (error) {
+      if (error instanceof AppError && error.code === 'ACCOUNT_NOT_FOUND') {
+        continue;
+      }
+      if (error instanceof AppError && error.code === 'DESTINATION_BANK_UNAVAILABLE') {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (!destinationBank || !remoteAccount) {
+    throw new AppError(404, 'ACCOUNT_NOT_FOUND', `Account with number '${input.destinationAccount}' not found on any remote bank`);
+  }
   const snapshot = sourceAccount.currency === remoteAccount.currency
     ? null
     : await getExchangeRatesWithFallback(db, config);

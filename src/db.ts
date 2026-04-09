@@ -332,6 +332,11 @@ export const getBankById = (db: SqliteDatabase, bankId: string) =>
 export const getBankByPrefix = (db: SqliteDatabase, prefix: string) =>
   db.prepare('SELECT * FROM bank_directory WHERE substr(bank_id, 1, 3) = ? LIMIT 1').get(prefix) as BankDirectoryRow | undefined;
 
+export const getBanksByPrefix = (db: SqliteDatabase, prefix: string, excludeBankId?: string) =>
+  excludeBankId
+    ? db.prepare('SELECT * FROM bank_directory WHERE substr(bank_id, 1, 3) = ? AND bank_id != ? ORDER BY bank_id ASC').all(prefix, excludeBankId) as BankDirectoryRow[]
+    : db.prepare('SELECT * FROM bank_directory WHERE substr(bank_id, 1, 3) = ? ORDER BY bank_id ASC').all(prefix) as BankDirectoryRow[];
+
 export const replaceExchangeRates = (db: SqliteDatabase, snapshot: ExchangeRateSnapshot) => {
   const transaction = db.transaction(() => {
     db.prepare('DELETE FROM exchange_rates').run();
