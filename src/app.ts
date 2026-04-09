@@ -109,7 +109,7 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
         version: '1.0.0',
         description: 'Branch bank API for the distributed banking system'
       },
-      servers: [{ url: config.bankAddress + config.apiPrefix }],
+      servers: [{ url: config.bankAddress }],
       components: {
         securitySchemes: {
           BearerAuth: {
