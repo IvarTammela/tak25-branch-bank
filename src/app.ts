@@ -106,6 +106,8 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
   const app = Fastify({ logger: true }) as unknown as BranchApp;
   app.state = { db, config, keys };
 
+  const errorSchema = { type: 'object', properties: { code: { type: 'string' }, message: { type: 'string' } } } as const;
+
   await app.register(swagger, {
     openapi: {
       info: {
@@ -159,7 +161,7 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     return reply.send(uiHtml);
   });
 
-  app.get('/health', async () => {
+  app.get('/health', { schema: { tags: ['System'], summary: 'Health check' } }, async () => {
     const identity = getIdentity(db);
     return {
       status: 'ok',
@@ -197,7 +199,7 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     tags: ['Users'],
     summary: 'Register a new user',
     body: { type: 'object', required: ['fullName'], properties: { fullName: { type: 'string' }, email: { type: 'string' } } },
-    response: { 201: { type: 'object', properties: { userId: { type: 'string' }, fullName: { type: 'string' }, email: { type: 'string' }, createdAt: { type: 'string' } } } }
+    response: { 201: { type: 'object', properties: { userId: { type: 'string' }, fullName: { type: 'string' }, email: { type: 'string' }, createdAt: { type: 'string' } } }, 400: errorSchema, 409: errorSchema }
   } }, async (request, reply) => {
     const parsed = registrationSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -233,7 +235,7 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     tags: ['Auth'],
     summary: 'Get Bearer token',
     body: { type: 'object', required: ['userId', 'apiKey'], properties: { userId: { type: 'string' }, apiKey: { type: 'string' } } },
-    response: { 200: { type: 'object', properties: { accessToken: { type: 'string' }, tokenType: { type: 'string' }, expiresIn: { type: 'number' } } } }
+    response: { 200: { type: 'object', properties: { accessToken: { type: 'string' }, tokenType: { type: 'string' }, expiresIn: { type: 'number' } } }, 400: errorSchema, 401: errorSchema }
   } }, async (request) => {
     const parsed = tokenSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -257,7 +259,8 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     tags: ['Users'],
     summary: 'Get user profile',
     security: [{ BearerAuth: [] }],
-    params: { type: 'object', properties: { userId: { type: 'string' } } }
+    params: { type: 'object', properties: { userId: { type: 'string' } } },
+    response: { 200: { type: 'object', properties: { userId: { type: 'string' }, fullName: { type: 'string' }, email: { type: 'string' }, createdAt: { type: 'string' } } }, 401: errorSchema, 403: errorSchema, 404: errorSchema }
   } }, async (request) => {
     const userId = await authenticateUser(request, config, keys);
     const params = z.object({ userId: z.string() }).parse(request.params);
@@ -283,7 +286,8 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     tags: ['Accounts'],
     summary: 'List user accounts',
     security: [{ BearerAuth: [] }],
-    params: { type: 'object', properties: { userId: { type: 'string' } } }
+    params: { type: 'object', properties: { userId: { type: 'string' } } },
+    response: { 200: { type: 'object', properties: { userId: { type: 'string' }, accounts: { type: 'array', items: { type: 'object', properties: { accountNumber: { type: 'string' }, currency: { type: 'string' }, balance: { type: 'string' }, createdAt: { type: 'string' } } } } } }, 401: errorSchema, 403: errorSchema, 404: errorSchema }
   } }, async (request) => {
     const userId = await authenticateUser(request, config, keys);
     const params = z.object({ userId: z.string() }).parse(request.params);
@@ -314,7 +318,7 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     security: [{ BearerAuth: [] }],
     params: { type: 'object', properties: { userId: { type: 'string' } } },
     body: { type: 'object', required: ['currency'], properties: { currency: { type: 'string', description: 'ISO 4217 code (EUR, USD, GBP, SEK)' } } },
-    response: { 201: { type: 'object', properties: { accountNumber: { type: 'string' }, ownerId: { type: 'string' }, currency: { type: 'string' }, balance: { type: 'string' }, createdAt: { type: 'string' } } } }
+    response: { 201: { type: 'object', properties: { accountNumber: { type: 'string' }, ownerId: { type: 'string' }, currency: { type: 'string' }, balance: { type: 'string' }, createdAt: { type: 'string' } } }, 400: errorSchema, 401: errorSchema, 404: errorSchema }
   } }, async (request, reply) => {
     const authenticatedUserId = await authenticateUser(request, config, keys);
     const params = z.object({ userId: z.string() }).parse(request.params);
@@ -381,7 +385,7 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     tags: ['Accounts'],
     summary: 'Look up account (unauthenticated)',
     params: { type: 'object', properties: { accountNumber: { type: 'string' } } },
-    response: { 200: { type: 'object', properties: { accountNumber: { type: 'string' }, ownerName: { type: 'string' }, currency: { type: 'string' } } } }
+    response: { 200: { type: 'object', properties: { accountNumber: { type: 'string' }, ownerName: { type: 'string' }, currency: { type: 'string' } } }, 400: errorSchema, 404: errorSchema }
   } }, async (request) => {
     const raw = z.object({ accountNumber: z.string() }).parse(request.params);
     if (!/^[A-Z0-9]{8}$/.test(raw.accountNumber)) {
@@ -411,7 +415,7 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     security: [{ BearerAuth: [] }],
     params: { type: 'object', properties: { accountNumber: { type: 'string' } } },
     body: { type: 'object', required: ['amount'], properties: { amount: { type: 'string', description: 'Amount like "100.00"' } } },
-    response: { 200: { type: 'object', properties: { accountNumber: { type: 'string' }, balance: { type: 'string' } } } }
+    response: { 200: { type: 'object', properties: { accountNumber: { type: 'string' }, balance: { type: 'string' } } }, 400: errorSchema, 401: errorSchema, 403: errorSchema, 404: errorSchema }
   } }, async (request, reply) => {
     const authenticatedUserId = await authenticateUser(request, config, keys);
     const params = z.object({ accountNumber: z.string().regex(/^[A-Z0-9]{8}$/) }).parse(request.params);
@@ -440,7 +444,7 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     summary: 'Initiate transfer',
     security: [{ BearerAuth: [] }],
     body: { type: 'object', required: ['transferId', 'sourceAccount', 'destinationAccount', 'amount'], properties: { transferId: { type: 'string', format: 'uuid' }, sourceAccount: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string', description: 'Amount like "100.00"' } } },
-    response: { 201: { type: 'object', properties: { transferId: { type: 'string' }, status: { type: 'string' }, sourceAccount: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' }, convertedAmount: { type: 'string' }, exchangeRate: { type: 'string' }, rateCapturedAt: { type: 'string' }, timestamp: { type: 'string' } } } }
+    response: { 201: { type: 'object', properties: { transferId: { type: 'string' }, status: { type: 'string' }, sourceAccount: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' }, convertedAmount: { type: 'string' }, exchangeRate: { type: 'string' }, rateCapturedAt: { type: 'string' }, timestamp: { type: 'string' } } }, 400: errorSchema, 401: errorSchema, 404: errorSchema, 409: errorSchema, 422: errorSchema, 503: errorSchema }
   } }, async (request, reply) => {
     const authenticatedUserId = await authenticateUser(request, config, keys);
     const parsed = transferSchema.safeParse(request.body);
@@ -456,7 +460,8 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     tags: ['Transfers'],
     summary: 'List transfer history',
     security: [{ BearerAuth: [] }],
-    params: { type: 'object', properties: { userId: { type: 'string' } } }
+    params: { type: 'object', properties: { userId: { type: 'string' } } },
+    response: { 200: { type: 'object', properties: { transfers: { type: 'array', items: { type: 'object', properties: { transferId: { type: 'string' }, direction: { type: 'string' }, status: { type: 'string' }, sourceAccount: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' }, currency: { type: 'string' }, convertedAmount: { type: 'string' }, exchangeRate: { type: 'string' }, errorMessage: { type: 'string' }, createdAt: { type: 'string' } } } } } }, 401: errorSchema, 403: errorSchema }
   } }, async (request) => {
     const authenticatedUserId = await authenticateUser(request, config, keys);
     const params = z.object({ userId: z.string() }).parse(request.params);
@@ -486,7 +491,7 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     tags: ['Transfers'],
     summary: 'Receive inter-bank transfer (JWT)',
     body: { type: 'object', required: ['jwt'], properties: { jwt: { type: 'string' } } },
-    response: { 200: { type: 'object', properties: { transferId: { type: 'string' }, status: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' }, timestamp: { type: 'string' } } } }
+    response: { 200: { type: 'object', properties: { transferId: { type: 'string' }, status: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' }, timestamp: { type: 'string' } } }, 401: errorSchema, 403: errorSchema, 404: errorSchema }
   } }, async (request) => {
     const parsed = receiveTransferSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -500,7 +505,8 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     tags: ['Transfers'],
     summary: 'Get transfer status',
     security: [{ BearerAuth: [] }],
-    params: { type: 'object', properties: { transferId: { type: 'string', format: 'uuid' } } }
+    params: { type: 'object', properties: { transferId: { type: 'string', format: 'uuid' } } },
+    response: { 200: { type: 'object', properties: { transferId: { type: 'string' }, status: { type: 'string' }, sourceAccount: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' }, convertedAmount: { type: 'string' }, exchangeRate: { type: 'string' }, timestamp: { type: 'string' }, pendingSince: { type: 'string' }, nextRetryAt: { type: 'string' }, retryCount: { type: 'number' }, errorMessage: { type: 'string' } } }, 401: errorSchema, 404: errorSchema }
   } }, async (request) => {
     const authenticatedUserId = await authenticateUser(request, config, keys);
     const params = z.object({ transferId: z.string().uuid() }).parse(request.params);
