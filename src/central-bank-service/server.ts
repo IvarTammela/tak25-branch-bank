@@ -29,6 +29,11 @@ app.setErrorHandler((error, request, reply) => {
   return reply.status(500).send({ code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' });
 });
 
+app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+  try { done(null, body && (body as string).length > 0 ? JSON.parse(body as string) : {}); }
+  catch (e) { done(e as Error, undefined); }
+});
+
 app.get('/health', async () => {
   const identity = getIdentity(db);
   return { status: 'ok', bankId: identity.bank_id, bankPrefix: identity.bank_prefix, address: identity.address };

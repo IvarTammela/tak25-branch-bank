@@ -22,6 +22,11 @@ migrateDatabase(db);
 
 const app = Fastify({ logger: true });
 
+app.addContentTypeParser('application/json', { parseAs: 'string' }, (req: any, body: any, done: any) => {
+  try { done(null, body && (body as string).length > 0 ? JSON.parse(body as string) : {}); }
+  catch (e: any) { done(e, undefined); }
+});
+
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof z.ZodError) return reply.status(400).send({ code: 'INVALID_REQUEST', message: error.issues[0]?.message ?? 'Invalid' });
   if (isAppError(error)) return reply.status(error.statusCode).send(toErrorBody(error));
@@ -55,7 +60,7 @@ const buildTransferResponse = (t: TransferRow) => ({
   exchangeRate: t.exchange_rate ?? undefined, rateCapturedAt: t.rate_captured_at ?? undefined,
   pendingSince: t.pending_since ?? undefined, nextRetryAt: t.next_retry_at ?? undefined,
   retryCount: t.status === 'pending' ? t.retry_count : undefined,
-  timestamp: t.updated_at, errorMessage: t.error_message ?? undefined
+  timestamp: t.updated_at, createdAt: t.created_at, errorMessage: t.error_message ?? undefined
 });
 
 const normalizeBankBase = (address: string) => { const n = address.replace(/\/+$/, ''); return n.endsWith('/api/v1') ? n : `${n}/api/v1`; };
@@ -186,8 +191,8 @@ app.post('/api/v1/transfers', async (request, reply) => {
 
 // POST /transfers/receive
 app.post('/api/v1/transfers/receive', async (request) => {
-  const parsed = z.object({ jwt: z.string().min(20) }).safeParse(request.body);
-  if (!parsed.success) throw new AppError(400, 'INVALID_REQUEST', parsed.error.issues[0]?.message ?? 'Invalid');
+  const parsed = z.object({ jwt: z.string().min(1) }).safeParse(request.body);
+  if (!parsed.success) throw new AppError(401, 'UNAUTHORIZED', 'JWT is required');
 
   const [, payloadSeg] = parsed.data.jwt.split('.');
   if (!payloadSeg) throw new AppError(401, 'UNAUTHORIZED', 'Malformed inter-bank token');

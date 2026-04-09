@@ -22,6 +22,11 @@ migrateDatabase(db);
 
 const app = Fastify({ logger: true });
 
+app.addContentTypeParser('application/json', { parseAs: 'string' }, (req: any, body: any, done: any) => {
+  try { done(null, body && (body as string).length > 0 ? JSON.parse(body as string) : {}); }
+  catch (e: any) { done(e, undefined); }
+});
+
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof z.ZodError) return reply.status(400).send({ code: 'INVALID_REQUEST', message: error.issues[0]?.message ?? 'Invalid request' });
   if (isAppError(error)) return reply.status(error.statusCode).send(toErrorBody(error));
