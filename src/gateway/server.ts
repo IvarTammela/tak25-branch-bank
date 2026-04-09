@@ -16,6 +16,12 @@ const app = Fastify({
   ajv: { customOptions: { allErrors: true } }
 });
 
+app.addContentTypeParser('application/json', { parseAs: 'string' }, (req: any, body: any, done: any) => {
+  try { done(null, body && (body as string).length > 0 ? JSON.parse(body as string) : {}); }
+  catch (e: any) { done(e, undefined); }
+});
+app.addContentTypeParser('*', (req: any, payload: any, done: any) => { done(null, {}); });
+
 // Disable body validation on gateway - services validate themselves
 app.addHook('preValidation', async (request) => {
   // Skip Fastify's built-in body validation for proxy routes
@@ -64,7 +70,7 @@ const proxy = async (serviceUrl: string, request: any, reply: any) => {
     const res = await fetch(url, {
       method: request.method,
       headers,
-      body: request.method !== 'GET' && request.method !== 'HEAD' ? JSON.stringify(request.body) : undefined
+      body: request.method !== 'GET' && request.method !== 'HEAD' ? JSON.stringify(request.body ?? {}) : undefined
     });
     const text = await res.text();
     const apiKey = res.headers.get('x-api-key');
