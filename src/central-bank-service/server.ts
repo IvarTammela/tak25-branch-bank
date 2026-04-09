@@ -33,6 +33,7 @@ app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, 
   try { done(null, body && (body as string).length > 0 ? JSON.parse(body as string) : {}); }
   catch (e) { done(e as Error, undefined); }
 });
+app.addContentTypeParser('*', (req, payload, done) => { done(null, {}); });
 
 app.get('/health', async () => {
   const identity = getIdentity(db);
