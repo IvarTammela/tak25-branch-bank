@@ -190,7 +190,9 @@ app.post('/api/v1/transfers', async (request, reply) => {
       markTransferCompleted(db, input.transferId, new Date().toISOString());
       return reply.status(201).send(buildTransferResponse(getTransferById(db, input.transferId)!));
     }
-  } catch {}
+    const errBody = await res.text().catch(() => '');
+    console.error(`Cross-bank delivery failed: ${res.status} ${destBankBase}/transfers/receive -> ${errBody}`);
+  } catch (e) { console.error('Cross-bank delivery error:', (e as Error).message); }
 
   return reply.status(201).send(buildTransferResponse(getTransferById(db, input.transferId)!));
 });
@@ -307,7 +309,9 @@ setInterval(async () => {
           try {
             const res = await fetch(`${base}/transfers/receive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jwt }) });
             if (res.ok) { deliveredBase = base; break; }
-          } catch {}
+            const errBody = await res.text().catch(() => '');
+            console.error(`Retry delivery failed: ${res.status} ${base}/transfers/receive -> ${errBody}`);
+          } catch (e) { console.error(`Retry delivery error to ${base}:`, (e as Error).message); }
         }
         if (deliveredBase) {
           markTransferCompleted(db, t.transfer_id, new Date().toISOString());
