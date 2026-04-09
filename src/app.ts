@@ -123,6 +123,24 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     db.close();
   });
 
+  app.get('/', async () => {
+    const identity = getIdentity(db);
+    return {
+      name: identity.name,
+      bankId: identity.bank_id,
+      bankPrefix: identity.bank_prefix,
+      address: identity.address,
+      endpoints: {
+        health: '/health',
+        users: `${config.apiPrefix}/users`,
+        accounts: `${config.apiPrefix}/accounts/{accountNumber}`,
+        transfers: `${config.apiPrefix}/transfers`,
+        transfersReceive: `${config.apiPrefix}/transfers/receive`,
+        authTokens: `${config.apiPrefix}/auth/tokens`
+      }
+    };
+  });
+
   app.get('/health', async () => {
     const identity = getIdentity(db);
     return {

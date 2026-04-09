@@ -197,4 +197,6 @@ Kaetud stsenaariumid:
 
 ## Live URL
 
-Live URL ei ole selles töökaustas veel seadistatud. Deploy jaoks sobib näiteks Render või Railway, kus API ja worker käivituvad eraldi teenustena sama koodibaasi põhjal.
+https://tak25-branch-bank.onrender.com
+
+Render Free tier, Node runtime. API ja worker jooksevad ühes protsessis.
