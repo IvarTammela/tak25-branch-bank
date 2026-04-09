@@ -27,6 +27,7 @@ import type { KeyPair } from './keys.js';
 import { ensureKeyPair } from './keys.js';
 import { formatMoney, parseMoney } from './money.js';
 import { createTransfer, getTransferStatus, receiveTransfer } from './transfers.js';
+import { html as uiHtml } from './ui.js';
 
 const registrationSchema = z.object({
   fullName: z.string().trim().min(2).max(200),
@@ -151,22 +152,9 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     db.close();
   });
 
-  app.get('/', async () => {
-    const identity = getIdentity(db);
-    return {
-      name: identity.name,
-      bankId: identity.bank_id,
-      bankPrefix: identity.bank_prefix,
-      address: identity.address,
-      endpoints: {
-        health: '/health',
-        users: `${config.apiPrefix}/users`,
-        accounts: `${config.apiPrefix}/accounts/{accountNumber}`,
-        transfers: `${config.apiPrefix}/transfers`,
-        transfersReceive: `${config.apiPrefix}/transfers/receive`,
-        authTokens: `${config.apiPrefix}/auth/tokens`
-      }
-    };
+  app.get('/', async (request, reply) => {
+    reply.header('content-type', 'text/html; charset=utf-8');
+    return reply.send(uiHtml);
   });
 
   app.get('/health', async () => {
