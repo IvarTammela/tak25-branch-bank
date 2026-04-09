@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { createApiKey, hashApiKey, issueAccessToken, verifyAccessToken } from './auth.js';
 import type { AppConfig } from './config.js';
 import {
+  adjustAccountBalance,
   createAccount,
   createUser,
   getAccountByNumber,
@@ -314,6 +315,29 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
       ownerName: user.full_name,
       currency: account.currency
     };
+  });
+
+  app.post(`${config.apiPrefix}/accounts/:accountNumber/deposit`, async (request, reply) => {
+    const authenticatedUserId = await authenticateUser(request, config, keys);
+    const params = z.object({ accountNumber: z.string().regex(/^[A-Z0-9]{8}$/) }).parse(request.params);
+    const body = z.object({ amount: z.string().regex(/^\d+\.\d{2}$/) }).parse(request.body);
+
+    const account = getAccountByNumber(db, params.accountNumber);
+    if (!account) {
+      throw new AppError(404, 'ACCOUNT_NOT_FOUND', `Account with number '${params.accountNumber}' not found`);
+    }
+    if (account.owner_id !== authenticatedUserId) {
+      throw new AppError(403, 'FORBIDDEN', 'You can only deposit to your own accounts');
+    }
+
+    const amountMinor = Number.parseInt(body.amount.replace('.', ''), 10);
+    adjustAccountBalance(db, account.account_number, amountMinor);
+    const updated = getAccountByNumber(db, account.account_number)!;
+
+    return reply.status(200).send({
+      accountNumber: updated.account_number,
+      balance: formatMoney(updated.balance_minor)
+    });
   });
 
   app.post(`${config.apiPrefix}/transfers`, async (request, reply) => {
