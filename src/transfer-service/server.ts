@@ -63,7 +63,11 @@ const buildTransferResponse = (t: TransferRow) => ({
   timestamp: t.updated_at, createdAt: t.created_at, errorMessage: t.error_message ?? undefined
 });
 
-const normalizeBankBase = (address: string) => { const n = address.replace(/\/+$/, ''); return n.endsWith('/api/v1') ? n : `${n}/api/v1`; };
+const getBankBases = (address: string) => {
+  const n = address.replace(/\/+$/, '');
+  // Try with /api/v1 first (most common), then without (e.g. OLL bank)
+  return n.endsWith('/api/v1') ? [n] : [`${n}/api/v1`, n];
+};
 
 // POST /transfers
 app.post('/api/v1/transfers', async (request, reply) => {
@@ -138,12 +142,15 @@ app.post('/api/v1/transfers', async (request, reply) => {
 
   let destBank: any = null;
   let remoteAccount: any = null;
+  let destBankBase: string | null = null;
   for (const c of candidates) {
-    try {
-      const base = normalizeBankBase(c.address);
-      const res = await fetch(`${base}/accounts/${input.destinationAccount}`);
-      if (res.ok) { remoteAccount = await res.json(); destBank = c; break; }
-    } catch {}
+    for (const base of getBankBases(c.address)) {
+      try {
+        const res = await fetch(`${base}/accounts/${input.destinationAccount}`);
+        if (res.ok) { remoteAccount = await res.json(); destBank = c; destBankBase = base; break; }
+      } catch {}
+    }
+    if (destBank) break;
   }
   if (!destBank || !remoteAccount) throw new AppError(404, 'ACCOUNT_NOT_FOUND', `Account '${input.destinationAccount}' not found on any remote bank`);
 
@@ -178,8 +185,7 @@ app.post('/api/v1/transfers', async (request, reply) => {
       exchangeRate: conversion.exchangeRate, rateCapturedAt: rates?.timestamp,
       timestamp: now, nonce: randomUUID()
     });
-    const base = normalizeBankBase(destBank.address);
-    const res = await fetch(`${base}/transfers/receive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jwt }) });
+    const res = await fetch(`${destBankBase}/transfers/receive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jwt }) });
     if (res.ok) {
       markTransferCompleted(db, input.transferId, new Date().toISOString());
       return reply.status(201).send(buildTransferResponse(getTransferById(db, input.transferId)!));
@@ -247,7 +253,11 @@ app.get('/api/v1/transfers/:transferId', async (request) => {
   const params = z.object({ transferId: z.string().uuid() }).parse(request.params);
   const transfer = getTransferById(db, params.transferId);
   if (!transfer) throw new AppError(404, 'TRANSFER_NOT_FOUND', `Transfer '${params.transferId}' not found`);
-  if (transfer.initiated_by_user_id !== userId) throw new AppError(403, 'FORBIDDEN', 'Not your transfer');
+  if (transfer.initiated_by_user_id !== userId) {
+    const userAccounts = await accountService(`/internal/accounts/by-owner/${userId}`) as { accounts: { accountNumber: string }[] };
+    if (!userAccounts.accounts.some(a => a.accountNumber === transfer.destination_account))
+      throw new AppError(403, 'FORBIDDEN', 'Not your transfer');
+  }
   return buildTransferResponse(transfer);
 });
 
@@ -256,7 +266,9 @@ app.get('/api/v1/users/:userId/transfers', async (request) => {
   const userId = await authenticateUser(request);
   const params = z.object({ userId: z.string() }).parse(request.params);
   if (userId !== params.userId) throw new AppError(403, 'FORBIDDEN', 'You can only view your own transfers');
-  return { transfers: listTransfersByUser(db, params.userId).map(t => ({ ...buildTransferResponse(t), direction: t.direction, currency: t.amount_currency })) };
+  const userAccounts = await accountService(`/internal/accounts/by-owner/${params.userId}`) as { accounts: { accountNumber: string }[] };
+  const accountNumbers = userAccounts.accounts.map(a => a.accountNumber);
+  return { transfers: listTransfersByUser(db, params.userId, accountNumbers).map(t => ({ ...buildTransferResponse(t), direction: t.direction, currency: t.amount_currency })) };
 });
 
 await app.listen({ host: '0.0.0.0', port: PORT });
@@ -284,14 +296,20 @@ setInterval(async () => {
           exchangeRate: t.exchange_rate ?? undefined, rateCapturedAt: t.rate_captured_at ?? undefined,
           timestamp: t.created_at, nonce: randomUUID()
         });
-        const base = normalizeBankBase(bank.address);
-        const res = await fetch(`${base}/transfers/receive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jwt }) });
-        if (res.ok) { markTransferCompleted(db, t.transfer_id, new Date().toISOString()); }
-        else {
-          const retryCount = t.retry_count + 1;
-          const delay = Math.min(60, 2 ** retryCount) * 60000;
-          scheduleTransferRetry(db, t.transfer_id, new Date().toISOString(), new Date(Date.now() + delay).toISOString(), retryCount);
+        let deliveredBase: string | null = null;
+        for (const base of getBankBases(bank.address)) {
+          try {
+            const res = await fetch(`${base}/transfers/receive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jwt }) });
+            if (res.ok) { deliveredBase = base; break; }
+          } catch {}
         }
+        if (deliveredBase) {
+          markTransferCompleted(db, t.transfer_id, new Date().toISOString());
+          continue;
+        }
+        const retryCount = t.retry_count + 1;
+        const delay = Math.min(60, 2 ** retryCount) * 60000;
+        scheduleTransferRetry(db, t.transfer_id, new Date().toISOString(), new Date(Date.now() + delay).toISOString(), retryCount);
       } catch (e) {
         const retryCount = t.retry_count + 1;
         const delay = Math.min(60, 2 ** retryCount) * 60000;
