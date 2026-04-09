@@ -197,6 +197,6 @@ Kaetud stsenaariumid:
 
 ## Live URL
 
-https://tak25-branch-bank.onrender.com
+http://46.62.166.124:8081
 
-Render Free tier, Node runtime. API ja worker jooksevad ühes protsessis.
+Hetzner VPS, Node 22, systemd teenus. Swagger UI: http://46.62.166.124:8081/docs
