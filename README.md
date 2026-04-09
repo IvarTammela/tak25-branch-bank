@@ -9,8 +9,6 @@ Panga harukontori API hajutatud pangandussüsteemi jaoks. Toetab kasutajate regi
 - **Web UI:** http://46.62.166.124:8081
 - **Bank ID:** AKB001 (prefiks AKB)
 
-Hetzner VPS, Node 22, systemd teenus.
-
 ## Kasutatud tehnoloogiad
 
 | Tehnoloogia | Otstarve |
@@ -18,91 +16,111 @@ Hetzner VPS, Node 22, systemd teenus.
 | Node.js 22 | Runtime |
 | TypeScript | Tüübitud kood |
 | Fastify | HTTP raamistik |
-| SQLite (better-sqlite3) | Andmebaas |
+| SQLite (better-sqlite3) | Andmebaas (iga teenus oma) |
 | JOSE | ES256 JWT allkirjastamine ja verifitseerimine |
 | Zod | Sisendi valideerimine |
 | @fastify/swagger + swagger-ui | API dokumentatsioon |
-| Docker Compose | Konteineripõhine deploy |
 
 ## Mikroteenuste arhitektuur
 
-Süsteem koosneb kolmest iseseisvast komponendist:
+Süsteem koosneb 5 iseseisvast teenusest, igaühel oma andmebaas ja vastutusala:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Kliendid                          │
-│         (Web UI, Swagger UI, curl, teised pangad)    │
-└──────────────┬──────────────────────┬───────────────┘
-               │                      │
-               ▼                      ▼
-┌──────────────────────┐  ┌──────────────────────────┐
-│   branch-api         │  │   bank-worker             │
-│   (HTTP server)      │  │   (taustaprotsess)        │
-│                      │  │                           │
-│ - /api/v1/users      │  │ - keskpanga registreering  │
-│ - /api/v1/accounts   │  │ - heartbeat (10 min)      │
-│ - /api/v1/transfers  │  │ - kataloogi sync (5 min)  │
-│ - /api/v1/sync       │  │ - kursside sync (5 min)   │
-│ - /transfers/receive │  │ - pending retry (15 sek)  │
-│ - /docs (Swagger)    │  │ - timeout refund (4h)     │
-└──────────┬───────────┘  └──────────┬────────────────┘
-           │                         │
-           ▼                         ▼
-┌─────────────────────────────────────────────────────┐
-│                  SQLite andmebaas                     │
-│  (WAL mode, busy_timeout, transaktsioonid)           │
-└─────────────────────────────────────────────────────┘
-           │
-           ▼
-┌─────────────────────────────────────────────────────┐
-│              Keskpank (väline API)                    │
-│  POST /banks, GET /banks, POST /heartbeat            │
-│  GET /exchange-rates                                 │
-└─────────────────────────────────────────────────────┘
+                    ┌─────────────────────┐
+                    │     Kliendid        │
+                    │ (Web UI, Swagger,   │
+                    │  curl, teised pangad)│
+                    └────────┬────────────┘
+                             │
+                    ┌────────▼────────────┐
+                    │   API Gateway       │
+                    │   port 8081         │
+                    │   (marsruutimine,   │
+                    │    UI, Swagger)     │
+                    └──┬───┬───┬───┬─────┘
+                       │   │   │   │
+          ┌────────────┘   │   │   └────────────┐
+          ▼                ▼   ▼                ▼
+ ┌─────────────┐  ┌──────────────┐  ┌───────────────────┐
+ │ User Service│  │Account Service│  │ Transfer Service  │
+ │ port 8082   │  │ port 8083    │  │ port 8084         │
+ │             │  │              │  │                   │
+ │ - register  │  │ - kontod     │  │ - ülekanded       │
+ │ - auth      │  │ - saldod     │  │ - inter-bank JWT  │
+ │ - profiilid │  │ - deposit    │  │ - retry worker    │
+ └─────────────┘  └──────────────┘  └───────────────────┘
+        │                │                    │
+        ▼                ▼                    ▼
+  user-service.db  account-service.db  transfer-service.db
+                                              │
+                    ┌─────────────────────────┘
+                    ▼
+          ┌──────────────────────┐
+          │Central Bank Service  │
+          │ port 8085            │
+          │                     │
+          │ - registreerimine   │
+          │ - heartbeat         │
+          │ - kataloogi sync    │
+          │ - kursside sync     │
+          └──────────────────────┘
+                    │
+                    ▼
+           central-bank-service.db
 ```
 
-**Produkstioonis** (Hetzner) jooksevad API ja worker samas protsessis (`npm start`), kuna jagavad sama SQLite faili.
+### Teenuste kirjeldus
 
-**Docker Compose'iga** saab käivitada eraldi teenustena:
-- `branch-api` - HTTP API
-- `bank-worker` - taustaprotsess
+**API Gateway (port 8081)** - Marsruudib välised päringud õigesse teenusesse. Serveerib Web UI-d ja Swagger dokumentatsiooni. Ei oma andmeid.
 
-Iga teenus on iseseisvalt deployeritav ja skaleeritav.
+**User Service (port 8082)** - Kasutajate registreerimine, API võtmete haldus, Bearer tokenite väljastamine. Omab `users` tabelit.
+
+**Account Service (port 8083)** - Kontode loomine, saldode haldus, deposiidid, konto otsingud. Omab `accounts` tabelit. Suhtleb User Service'iga omanike nimede jaoks.
+
+**Transfer Service (port 8084)** - Pangasisesed ja pankadevahelised ülekanded, ES256 JWT vastuvõtt, retry worker pending ülekannetele. Omab `transfers` tabelit. Suhtleb Account Service'iga saldode muutmiseks.
+
+**Central Bank Service (port 8085)** - Keskpanga registreerimine ja heartbeat, pankade kataloogi sünkroniseerimine, valuutakursside uuendamine. Omab `bank_identity`, `bank_directory`, `exchange_rates` tabeleid.
+
+### Teenustevaheline suhtlus
+
+Teenused suhtlevad REST API kaudu üle HTTP:
+- Account Service -> User Service: kasutaja nime päring (`/internal/users/:id`)
+- Transfer Service -> Account Service: saldo kontroll ja muutmine (`/internal/accounts/:nr/adjust`)
+- Transfer Service -> Central Bank Service: panga identiteet, kataloog, kursid (`/internal/*`)
+- Account Service -> Central Bank Service: panga prefiks (`/internal/identity`)
 
 ## Andmebaasi skeem
 
+Iga teenus omab oma SQLite andmebaasi:
+
+**user-service.db:**
 ```sql
--- Kasutajad
 users (id TEXT PK, full_name TEXT, email TEXT UNIQUE, api_key_hash TEXT, created_at TEXT)
+```
 
--- Kontod (saldo sentides, vältimaks ujukomaaritmeetika vigu)
-accounts (account_number TEXT PK, owner_id TEXT FK->users, currency TEXT, balance_minor INT, created_at TEXT)
+**account-service.db:**
+```sql
+accounts (account_number TEXT PK, owner_id TEXT, currency TEXT, balance_minor INT, created_at TEXT)
+```
 
--- Ülekanded (pangasisesed ja pankadevahelised)
+**transfer-service.db:**
+```sql
 transfers (transfer_id TEXT PK, direction TEXT, status TEXT, source_account TEXT,
            destination_account TEXT, amount_minor INT, amount_currency TEXT,
-           source_currency TEXT, destination_currency TEXT, converted_amount_minor INT,
-           exchange_rate TEXT, rate_captured_at TEXT, error_message TEXT,
+           converted_amount_minor INT, exchange_rate TEXT, error_message TEXT,
            initiated_by_user_id TEXT, pending_since TEXT, next_retry_at TEXT,
            retry_count INT, source_bank_id TEXT, destination_bank_id TEXT,
            created_at TEXT, updated_at TEXT, locked_amount_minor INT)
-
--- Panga identiteet (1 rida)
-bank_identity (id INT PK, bank_id TEXT, bank_prefix TEXT, public_key TEXT,
-               address TEXT, name TEXT, registered_at TEXT, expires_at TEXT)
-
--- Keskpanga kataloog (vahemälu)
-bank_directory (bank_id TEXT PK, name TEXT, address TEXT, public_key TEXT,
-                last_heartbeat TEXT, status TEXT)
-
--- Valuutakursid (vahemälu)
-exchange_rates (currency TEXT PK, rate TEXT, captured_at TEXT)
-
--- Seaded (sync ajatemplid)
-settings (key TEXT PK, value TEXT)
 ```
 
-Kõik saldo muutused tehakse SQLite transaktsioonides. WAL mode + busy_timeout tagavad samaaegse ligipääsu.
+**central-bank-service.db:**
+```sql
+bank_identity (id INT PK, bank_id TEXT, bank_prefix TEXT, public_key TEXT, address TEXT, name TEXT)
+bank_directory (bank_id TEXT PK, name TEXT, address TEXT, public_key TEXT, last_heartbeat TEXT, status TEXT)
+exchange_rates (currency TEXT PK, rate TEXT, captured_at TEXT)
+```
+
+Kõik saldo muutused tehakse transaktsioonides. WAL mode + busy_timeout tagavad samaaegse ligipääsu.
 
 ## API endpointid
 
@@ -137,6 +155,29 @@ Kõik saldo muutused tehakse SQLite transaktsioonides. WAL mode + busy_timeout t
 | GET | /api/v1/banks | - | Registreeritud pangad |
 | GET | /health | - | Terviskontroll |
 
+## Käivitamine
+
+### Kõik teenused korraga
+```bash
+npm install
+cp .env.example .env
+npm start
+```
+
+### Üksikud teenused
+```bash
+npm run start:central-bank-service
+npm run start:user-service
+npm run start:account-service
+npm run start:transfer-service
+npm run start:gateway
+```
+
+### Monoliitne režiim (arenduseks)
+```bash
+npm run start:monolith
+```
+
 ## Bearer autentimine
 
 1. Registreeri kasutaja:
@@ -156,7 +197,8 @@ curl -X POST http://46.62.166.124:8081/api/v1/auth/tokens \
 
 3. Kasuta tokenit:
 ```bash
-curl -H "Authorization: Bearer <accessToken>" http://46.62.166.124:8081/api/v1/users/<userId>/accounts
+curl -H "Authorization: Bearer <accessToken>" \
+  http://46.62.166.124:8081/api/v1/users/<userId>/accounts
 ```
 
 ## Näidispäringud
@@ -169,15 +211,7 @@ curl -X POST http://46.62.166.124:8081/api/v1/users/$USER_ID/accounts \
   -d '{"currency":"EUR"}'
 ```
 
-Raha lisamine:
-```bash
-curl -X POST http://46.62.166.124:8081/api/v1/accounts/AKB12345/deposit \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' \
-  -d '{"amount":"100.00"}'
-```
-
-Ülekanne (pangasisene):
+Ülekanne:
 ```bash
 curl -X POST http://46.62.166.124:8081/api/v1/transfers \
   -H "Authorization: Bearer $TOKEN" \
@@ -185,57 +219,34 @@ curl -X POST http://46.62.166.124:8081/api/v1/transfers \
   -d '{
     "transferId":"550e8400-e29b-41d4-a716-446655440000",
     "sourceAccount":"AKB12345",
-    "destinationAccount":"AKB67890",
+    "destinationAccount":"TAK67890",
     "amount":"25.00"
   }'
 ```
 
-Konto otsing (autentimata):
-```bash
-curl http://46.62.166.124:8081/api/v1/accounts/AKB12345
-```
-
 ## Keskpanga integratsioon
 
-Worker suhtleb keskpangaga (`https://test.diarainfra.com/central-bank/api/v1`):
+Central Bank Service suhtleb keskpangaga (`https://test.diarainfra.com/central-bank/api/v1`):
 
 | Endpoint | Sagedus | Otstarve |
 |---|---|---|
 | POST /banks | Käivitusel | Panga registreerimine |
-| POST /banks/{bankId}/heartbeat | 10 min | Registreerimise säilitamine (30 min timeout) |
+| POST /banks/{bankId}/heartbeat | 10 min | Registreerimise säilitamine |
 | GET /banks | 5 min | Pankade kataloogi sünkroniseerimine |
 | GET /exchange-rates | 5 min | Valuutakursside uuendamine |
-
-Pankadevahelistes ülekannetes allkirjastatakse JWT ES256 algoritmiga. Vastuvõttev pank verifitseerib signatuuri keskpanga kataloogist saadud avaliku võtme abil.
 
 ## Ülekannete töötlus
 
 **Pangasisene ülekanne:**
-- Kohe transaktsioonis debiteerimine + krediteerimine
+- Transfer Service kutsub Account Service't saldo debiteerimiseks ja krediteerimiseks
 - Valuutakonversioon keskpanga kursside alusel
 
 **Pankadevaheline ülekanne:**
-1. Lähtekontolt raha lukustatakse kohe
-2. Sihtpanka üritatakse kohe JWT-ga kutsuda
+1. Transfer Service debiteerib lähtekonto Account Service kaudu
+2. Allkirjastab JWT ES256-ga ja saadab sihtpangale
 3. Ajutise vea korral jääb staatus `pending`
-4. Worker teeb exponential backoff retry (1min, 2min, 4min, ... kuni 1h)
-5. 4 tunni järel märgitakse `failed_timeout` ja raha tagastatakse
-
-**Idempotentsus:** Duplikaat `transferId` tagastab 409.
-
-## Käivitamine
-
-```bash
-npm install
-cp .env.example .env
-# Muuda .env failis BANK_ADDRESS ja CENTRAL_BANK_BASE_URL
-npm start
-```
-
-Eraldi workeriga (Docker Compose):
-```bash
-docker compose up --build
-```
+4. Retry worker teeb exponential backoff (1min -> 2min -> 4min -> ... -> 1h)
+5. 4h järel `failed_timeout` ja Account Service kaudu refund
 
 ## Testimine
 
@@ -243,10 +254,36 @@ docker compose up --build
 npm test
 ```
 
-Kaetud stsenaariumid:
-- Kasutaja registreerimine ja API võtme väljastus
-- Bearer tokeni loomine ja verifitseerimine
-- Pangasisene ülekanne saldo muutustega
-- Pankadevahelise ES256 JWT vastuvõtmine ja verifitseerimine
+### Testide tulemused (29 endpointi)
 
-Täielik integratsioonitesti tulemused (28 endpointi): kõik läbivad.
+| # | Test | Tulemus |
+|---|---|---|
+| 1 | GET /health | **OK** |
+| 2 | POST /sync | **OK** 3 panka |
+| 3 | GET /banks | **OK** |
+| 4 | POST /users (register) | **201** |
+| 5 | POST /users (duplicate) | **409** |
+| 6 | POST /auth/tokens | **200** |
+| 7 | POST /auth/tokens (bad key) | **401** |
+| 8 | GET /users/{id} | **200** |
+| 9 | GET /users/{id} (no auth) | **401** |
+| 10 | POST accounts (EUR) | **201** |
+| 11 | POST accounts (USD) | **201** |
+| 12 | POST accounts (bad currency) | **400** |
+| 13 | GET user accounts | **200** |
+| 14 | GET account lookup | **200** |
+| 15 | GET account (bad format) | **400** |
+| 16 | GET account (not found) | **404** |
+| 17 | GET all accounts | **200** |
+| 18 | POST deposit | **200** |
+| 19 | POST deposit (zero) | **400** |
+| 20 | POST transfer EUR->USD | **201** completed, kurss 1.08 |
+| 21 | POST transfer (duplicate) | **409** |
+| 22 | POST transfer (insufficient) | **422** |
+| 23 | POST transfer (self) | **400** |
+| 24 | GET transfer status | **200** |
+| 25 | GET transfer (not found) | **404** |
+| 26 | GET transfer history | **200** |
+| 27 | POST /transfers/receive (bad JWT) | **401** |
+| 28 | GET / (Web UI) | **200** |
+| 29 | GET /docs (Swagger) | **200** |
