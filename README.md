@@ -50,22 +50,21 @@ Kõik saldo muutused tehakse andmebaasi transaktsioonides.
 
 ## Toetatud endpointid
 
-OpenAPI põhised endpointid:
-
-- `POST /api/v1/users`
-- `POST /api/v1/users/{userId}/accounts`
-- `GET /api/v1/accounts/{accountNumber}`
-- `POST /api/v1/transfers`
-- `POST /api/v1/transfers/receive`
-- `GET /api/v1/transfers/{transferId}`
-
-Lisaks praktiliseks kasutuseks:
-
-- `POST /api/v1/auth/tokens`
-  Vahetab registreerimisel saadud API võtme Bearer JWT vastu.
-- `GET /api/v1/users/{userId}`
-- `GET /api/v1/users/{userId}/accounts`
-- `GET /health`
+- `POST /api/v1/users` - kasutaja registreerimine
+- `POST /api/v1/auth/tokens` - Bearer tokeni hankimine
+- `GET /api/v1/users/{userId}` - kasutaja profiil
+- `GET /api/v1/users/{userId}/accounts` - kasutaja kontod
+- `POST /api/v1/users/{userId}/accounts` - konto loomine
+- `GET /api/v1/accounts` - kõik kontod
+- `GET /api/v1/accounts/{accountNumber}` - konto otsing (autentimata)
+- `POST /api/v1/accounts/{accountNumber}/deposit` - raha lisamine
+- `POST /api/v1/transfers` - ülekanne
+- `POST /api/v1/transfers/receive` - pankadevahelise ülekande vastuvõtt (JWT)
+- `GET /api/v1/transfers/{transferId}` - ülekande staatus
+- `GET /api/v1/users/{userId}/transfers` - ülekannete ajalugu
+- `POST /api/v1/sync` - keskpanga kataloogi sünkroniseerimine
+- `GET /api/v1/banks` - registreeritud pangad
+- `GET /health` - terviskontroll
 
 ## Bearer autentimine
 
@@ -74,7 +73,7 @@ Lisaks praktiliseks kasutuseks:
 3. Küsi Bearer tokenit:
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/auth/tokens \
+curl -X POST http://46.62.166.124:8081/api/v1/auth/tokens \
   -H 'content-type: application/json' \
   -d '{"userId":"user-...","apiKey":"..."}'
 ```
@@ -118,7 +117,7 @@ docker compose up --build
 Kasutaja registreerimine:
 
 ```bash
-curl -i -X POST http://localhost:8081/api/v1/users \
+curl -i -X POST http://46.62.166.124:8081/api/v1/users \
   -H 'content-type: application/json' \
   -d '{"fullName":"Jane Doe","email":"jane@example.com"}'
 ```
@@ -126,7 +125,7 @@ curl -i -X POST http://localhost:8081/api/v1/users \
 Konto loomine:
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/users/$USER_ID/accounts \
+curl -X POST http://46.62.166.124:8081/api/v1/users/$USER_ID/accounts \
   -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{"currency":"EUR"}'
@@ -135,13 +134,13 @@ curl -X POST http://localhost:8081/api/v1/users/$USER_ID/accounts \
 Konto kontrollimine:
 
 ```bash
-curl http://localhost:8081/api/v1/accounts/ESTABCDE
+curl http://46.62.166.124:8081/api/v1/accounts/ESTABCDE
 ```
 
 Ülekande algatamine:
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/transfers \
+curl -X POST http://46.62.166.124:8081/api/v1/transfers \
   -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{
@@ -155,7 +154,7 @@ curl -X POST http://localhost:8081/api/v1/transfers \
 Ülekande staatuse küsimine:
 
 ```bash
-curl http://localhost:8081/api/v1/transfers/550e8400-e29b-41d4-a716-446655440000 \
+curl http://46.62.166.124:8081/api/v1/transfers/550e8400-e29b-41d4-a716-446655440000 \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -197,6 +196,10 @@ Kaetud stsenaariumid:
 
 ## Live URL
 
-http://46.62.166.124:8081
+- API: http://46.62.166.124:8081
+- Swagger UI: http://46.62.166.124:8081/docs
+- Web UI: http://46.62.166.124:8081
+
+Hetzner VPS, Node 22, systemd teenus. Bank ID: AKB001.
 
 Hetzner VPS, Node 22, systemd teenus. Swagger UI: http://46.62.166.124:8081/docs
