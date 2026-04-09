@@ -1,6 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import swagger from '@fastify/swagger';
+import swaggerUi from '@fastify/swagger-ui';
 import { z } from 'zod';
 
 import { createApiKey, hashApiKey, issueAccessToken, verifyAccessToken } from './auth.js';
@@ -100,6 +102,30 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
   const app = Fastify({ logger: true }) as unknown as BranchApp;
   app.state = { db, config, keys };
 
+  await app.register(swagger, {
+    openapi: {
+      info: {
+        title: 'TAK25 Branch Bank API',
+        version: '1.0.0',
+        description: 'Branch bank API for the distributed banking system'
+      },
+      servers: [{ url: config.bankAddress + config.apiPrefix }],
+      components: {
+        securitySchemes: {
+          BearerAuth: {
+            type: 'http',
+            scheme: 'bearer',
+            bearerFormat: 'JWT'
+          }
+        }
+      }
+    }
+  });
+
+  await app.register(swaggerUi, {
+    routePrefix: '/docs'
+  });
+
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof z.ZodError) {
       return reply.status(400).send({
@@ -152,7 +178,12 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     };
   });
 
-  app.post(`${config.apiPrefix}/users`, async (request, reply) => {
+  app.post(`${config.apiPrefix}/users`, { schema: {
+    tags: ['Users'],
+    summary: 'Register a new user',
+    body: { type: 'object', required: ['fullName'], properties: { fullName: { type: 'string' }, email: { type: 'string' } } },
+    response: { 201: { type: 'object', properties: { userId: { type: 'string' }, fullName: { type: 'string' }, email: { type: 'string' }, createdAt: { type: 'string' } } } }
+  } }, async (request, reply) => {
     const parsed = registrationSchema.safeParse(request.body);
     if (!parsed.success) {
       throw makeErrorFromZod(parsed.error.issues[0]?.message ?? 'Invalid registration payload');
@@ -183,7 +214,12 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     });
   });
 
-  app.post(`${config.apiPrefix}/auth/tokens`, async (request) => {
+  app.post(`${config.apiPrefix}/auth/tokens`, { schema: {
+    tags: ['Auth'],
+    summary: 'Get Bearer token',
+    body: { type: 'object', required: ['userId', 'apiKey'], properties: { userId: { type: 'string' }, apiKey: { type: 'string' } } },
+    response: { 200: { type: 'object', properties: { accessToken: { type: 'string' }, tokenType: { type: 'string' }, expiresIn: { type: 'number' } } } }
+  } }, async (request) => {
     const parsed = tokenSchema.safeParse(request.body);
     if (!parsed.success) {
       throw makeErrorFromZod(parsed.error.issues[0]?.message ?? 'Invalid token request');
@@ -202,7 +238,12 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     };
   });
 
-  app.get(`${config.apiPrefix}/users/:userId`, async (request) => {
+  app.get(`${config.apiPrefix}/users/:userId`, { schema: {
+    tags: ['Users'],
+    summary: 'Get user profile',
+    security: [{ BearerAuth: [] }],
+    params: { type: 'object', properties: { userId: { type: 'string' } } }
+  } }, async (request) => {
     const userId = await authenticateUser(request, config, keys);
     const params = z.object({ userId: z.string() }).parse(request.params);
 
@@ -223,7 +264,12 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     };
   });
 
-  app.get(`${config.apiPrefix}/users/:userId/accounts`, async (request) => {
+  app.get(`${config.apiPrefix}/users/:userId/accounts`, { schema: {
+    tags: ['Accounts'],
+    summary: 'List user accounts',
+    security: [{ BearerAuth: [] }],
+    params: { type: 'object', properties: { userId: { type: 'string' } } }
+  } }, async (request) => {
     const userId = await authenticateUser(request, config, keys);
     const params = z.object({ userId: z.string() }).parse(request.params);
 
@@ -247,7 +293,14 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     };
   });
 
-  app.post(`${config.apiPrefix}/users/:userId/accounts`, async (request, reply) => {
+  app.post(`${config.apiPrefix}/users/:userId/accounts`, { schema: {
+    tags: ['Accounts'],
+    summary: 'Create account',
+    security: [{ BearerAuth: [] }],
+    params: { type: 'object', properties: { userId: { type: 'string' } } },
+    body: { type: 'object', required: ['currency'], properties: { currency: { type: 'string', description: 'ISO 4217 code (EUR, USD, GBP, SEK)' } } },
+    response: { 201: { type: 'object', properties: { accountNumber: { type: 'string' }, ownerId: { type: 'string' }, currency: { type: 'string' }, balance: { type: 'string' }, createdAt: { type: 'string' } } } }
+  } }, async (request, reply) => {
     const authenticatedUserId = await authenticateUser(request, config, keys);
     const params = z.object({ userId: z.string() }).parse(request.params);
 
@@ -294,7 +347,12 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     });
   });
 
-  app.get(`${config.apiPrefix}/accounts/:accountNumber`, async (request) => {
+  app.get(`${config.apiPrefix}/accounts/:accountNumber`, { schema: {
+    tags: ['Accounts'],
+    summary: 'Look up account (unauthenticated)',
+    params: { type: 'object', properties: { accountNumber: { type: 'string' } } },
+    response: { 200: { type: 'object', properties: { accountNumber: { type: 'string' }, ownerName: { type: 'string' }, currency: { type: 'string' } } } }
+  } }, async (request) => {
     const raw = z.object({ accountNumber: z.string() }).parse(request.params);
     if (!/^[A-Z0-9]{8}$/.test(raw.accountNumber)) {
       throw new AppError(400, 'INVALID_ACCOUNT_NUMBER', 'Account number must be exactly 8 characters');
@@ -317,7 +375,14 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     };
   });
 
-  app.post(`${config.apiPrefix}/accounts/:accountNumber/deposit`, async (request, reply) => {
+  app.post(`${config.apiPrefix}/accounts/:accountNumber/deposit`, { schema: {
+    tags: ['Accounts'],
+    summary: 'Deposit funds',
+    security: [{ BearerAuth: [] }],
+    params: { type: 'object', properties: { accountNumber: { type: 'string' } } },
+    body: { type: 'object', required: ['amount'], properties: { amount: { type: 'string', description: 'Amount like "100.00"' } } },
+    response: { 200: { type: 'object', properties: { accountNumber: { type: 'string' }, balance: { type: 'string' } } } }
+  } }, async (request, reply) => {
     const authenticatedUserId = await authenticateUser(request, config, keys);
     const params = z.object({ accountNumber: z.string().regex(/^[A-Z0-9]{8}$/) }).parse(request.params);
     const body = z.object({ amount: z.string().regex(/^\d+\.\d{2}$/) }).parse(request.body);
@@ -340,7 +405,13 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     });
   });
 
-  app.post(`${config.apiPrefix}/transfers`, async (request, reply) => {
+  app.post(`${config.apiPrefix}/transfers`, { schema: {
+    tags: ['Transfers'],
+    summary: 'Initiate transfer',
+    security: [{ BearerAuth: [] }],
+    body: { type: 'object', required: ['transferId', 'sourceAccount', 'destinationAccount', 'amount'], properties: { transferId: { type: 'string', format: 'uuid' }, sourceAccount: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string', description: 'Amount like "100.00"' } } },
+    response: { 201: { type: 'object', properties: { transferId: { type: 'string' }, status: { type: 'string' }, sourceAccount: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' }, convertedAmount: { type: 'string' }, exchangeRate: { type: 'string' }, rateCapturedAt: { type: 'string' }, timestamp: { type: 'string' } } } }
+  } }, async (request, reply) => {
     const authenticatedUserId = await authenticateUser(request, config, keys);
     const parsed = transferSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -351,7 +422,12 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     return reply.status(201).send(result);
   });
 
-  app.post(`${config.apiPrefix}/transfers/receive`, async (request) => {
+  app.post(`${config.apiPrefix}/transfers/receive`, { schema: {
+    tags: ['Transfers'],
+    summary: 'Receive inter-bank transfer (JWT)',
+    body: { type: 'object', required: ['jwt'], properties: { jwt: { type: 'string' } } },
+    response: { 200: { type: 'object', properties: { transferId: { type: 'string' }, status: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' }, timestamp: { type: 'string' } } } }
+  } }, async (request) => {
     const parsed = receiveTransferSchema.safeParse(request.body);
     if (!parsed.success) {
       throw makeErrorFromZod(parsed.error.issues[0]?.message ?? 'Invalid inter-bank transfer payload');
@@ -360,7 +436,12 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
     return receiveTransfer(db, config, parsed.data.jwt);
   });
 
-  app.get(`${config.apiPrefix}/transfers/:transferId`, async (request) => {
+  app.get(`${config.apiPrefix}/transfers/:transferId`, { schema: {
+    tags: ['Transfers'],
+    summary: 'Get transfer status',
+    security: [{ BearerAuth: [] }],
+    params: { type: 'object', properties: { transferId: { type: 'string', format: 'uuid' } } }
+  } }, async (request) => {
     const authenticatedUserId = await authenticateUser(request, config, keys);
     const params = z.object({ transferId: z.string().uuid() }).parse(request.params);
     return getTransferStatus(db, params.transferId, authenticatedUserId);
