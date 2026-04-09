@@ -77,8 +77,8 @@ app.post('/api/v1/users/:userId/accounts', async (request, reply) => {
   if (!identity.bankPrefix) throw new AppError(503, 'BANK_NOT_REGISTERED', 'Bank not registered yet');
   const accountNumber = generateAccountNumber(identity.bankPrefix);
   const createdAt = new Date().toISOString();
-  createAccount(db, { account_number: accountNumber, owner_id: params.userId, currency: body.data.currency, balance_minor: 0, created_at: createdAt });
-  return reply.status(201).send({ accountNumber, ownerId: params.userId, currency: body.data.currency, balance: '0.00', createdAt });
+  createAccount(db, { account_number: accountNumber, owner_id: params.userId, currency: body.data.currency, balance_minor: 100000, created_at: createdAt });
+  return reply.status(201).send({ accountNumber, ownerId: params.userId, currency: body.data.currency, balance: '1000.00', createdAt });
 });
 
 app.get('/api/v1/accounts', async () => {

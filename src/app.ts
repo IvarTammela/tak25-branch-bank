@@ -353,7 +353,7 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
       account_number: accountNumber,
       owner_id: user.id,
       currency: parsed.data.currency,
-      balance_minor: 0,
+      balance_minor: 100000,
       created_at: createdAt
     });
 
@@ -361,7 +361,7 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
       accountNumber,
       ownerId: user.id,
       currency: parsed.data.currency,
-      balance: '0.00',
+      balance: '1000.00',
       createdAt
     });
   });
