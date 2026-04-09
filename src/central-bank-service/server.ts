@@ -36,8 +36,7 @@ app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, 
 app.addContentTypeParser('*', (req, payload, done) => { done(null, {}); });
 
 app.get('/health', async () => {
-  const identity = getIdentity(db);
-  return { status: 'ok', bankId: identity.bank_id, bankPrefix: identity.bank_prefix, address: identity.address };
+  return { status: 'ok', timestamp: new Date().toISOString() };
 });
 
 app.post('/api/v1/sync', async () => {

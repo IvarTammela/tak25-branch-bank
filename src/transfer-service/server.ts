@@ -268,7 +268,13 @@ app.get('/api/v1/users/:userId/transfers', async (request) => {
   if (userId !== params.userId) throw new AppError(403, 'FORBIDDEN', 'You can only view your own transfers');
   const userAccounts = await accountService(`/internal/accounts/by-owner/${params.userId}`) as { accounts: { accountNumber: string }[] };
   const accountNumbers = userAccounts.accounts.map(a => a.accountNumber);
-  return { transfers: listTransfersByUser(db, params.userId, accountNumbers).map(t => ({ ...buildTransferResponse(t), direction: t.direction, currency: t.amount_currency })) };
+  const accountSet = new Set(accountNumbers);
+  return { transfers: listTransfersByUser(db, params.userId, accountNumbers).map(t => {
+    // Compute direction relative to the querying user
+    const direction = t.initiated_by_user_id === params.userId ? 'outgoing'
+      : accountSet.has(t.destination_account) ? 'incoming' : t.direction;
+    return { ...buildTransferResponse(t), direction, currency: t.amount_currency };
+  }) };
 });
 
 await app.listen({ host: '0.0.0.0', port: PORT });

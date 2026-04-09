@@ -86,7 +86,7 @@ app.get('/', async (request, reply) => { reply.header('content-type', 'text/html
 
 // Fix #1: Health response schema matches actual response
 app.get('/health', { schema: { tags: ['System'], summary: 'Health check',
-  response: { 200: { type: 'object', properties: { status: { type: 'string' }, bankId: { type: 'string' }, bankPrefix: { type: 'string' }, address: { type: 'string' } } } }
+  response: { 200: { type: 'object', properties: { status: { type: 'string' }, timestamp: { type: 'string' } } } }
 } }, async (req, rep) => proxy(CB_SERVICE, req, rep));
 
 // Fix #4: apiKey documented in response description + x-api-key header noted
