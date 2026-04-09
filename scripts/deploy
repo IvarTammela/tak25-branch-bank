@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVER="root@46.62.166.124"
+REMOTE_DIR="/opt/tak25-branch-bank"
+SERVICES="bank-gateway bank-transfer-service bank-account-service bank-central-bank-service bank-user-service"
+
+echo "Deploying to ${SERVER}..."
+ssh "$SERVER" "cd ${REMOTE_DIR} && git pull origin main && systemctl restart ${SERVICES}"
+echo "Verifying health..."
+sleep 2
+ssh "$SERVER" "curl -sf http://localhost:8081/health"
+echo ""
+echo "Deploy complete."
