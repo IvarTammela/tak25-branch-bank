@@ -51,8 +51,13 @@ export const insertTransfer = (db: SqliteDatabase, t: TransferRow) => {
 export const getTransferById = (db: SqliteDatabase, transferId: string) =>
   db.prepare('SELECT * FROM transfers WHERE transfer_id = ?').get(transferId) as TransferRow | undefined;
 
-export const listTransfersByUser = (db: SqliteDatabase, userId: string) =>
-  db.prepare('SELECT * FROM transfers WHERE initiated_by_user_id = ? OR destination_account IN (SELECT source_account FROM transfers WHERE initiated_by_user_id = ?) ORDER BY created_at DESC LIMIT 100').all(userId, userId) as TransferRow[];
+export const listTransfersByUser = (db: SqliteDatabase, userId: string, userAccountNumbers: string[]) => {
+  if (userAccountNumbers.length === 0) {
+    return db.prepare('SELECT * FROM transfers WHERE initiated_by_user_id = ? ORDER BY created_at DESC LIMIT 100').all(userId) as TransferRow[];
+  }
+  const placeholders = userAccountNumbers.map(() => '?').join(',');
+  return db.prepare(`SELECT * FROM transfers WHERE initiated_by_user_id = ? OR destination_account IN (${placeholders}) ORDER BY created_at DESC LIMIT 100`).all(userId, ...userAccountNumbers) as TransferRow[];
+};
 
 export const listDuePendingTransfers = (db: SqliteDatabase, nowIso: string) =>
   db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND next_retry_at IS NOT NULL AND next_retry_at <= ? ORDER BY next_retry_at ASC").all(nowIso) as TransferRow[];
