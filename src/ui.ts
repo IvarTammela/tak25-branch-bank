@@ -297,7 +297,7 @@ async function loadAllAccounts() {
 }
 
 async function syncBanks() {
-  const {status, data} = await api('/sync', {method:'POST'});
+  const {status, data} = await api('/sync', {method:'POST', body: JSON.stringify({})});
   if (status === 200) {
     show('syncResult', 'Sünkroniseeritud! ' + data.banks.length + ' panka, kursid uuendatud.');
     renderBanksList(data.banks);
