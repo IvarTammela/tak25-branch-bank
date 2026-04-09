@@ -251,7 +251,7 @@ async function doTransfer() {
   const dst = document.getElementById('dstAccount').value.trim();
   const amt = document.getElementById('txAmount').value.trim();
   if (!src || !dst || !amt) return show('txResult','Täida kõik väljad',true);
-  const transferId = crypto.randomUUID();
+  const transferId = 'xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx'.replace(/x/g, () => Math.floor(Math.random()*16).toString(16));
   const {status, data} = await api('/transfers', {method:'POST', body: JSON.stringify({transferId, sourceAccount:src, destinationAccount:dst, amount:amt})});
   if (status === 201) {
     let msg = 'Ülekanne: ' + data.status + '\\nID: ' + data.transferId;
