@@ -124,7 +124,11 @@ app.post('/api/v1/transfers', async (request, reply) => {
   // Cross-bank transfer
   const directory = await getBankDirectory();
   const prefix = input.destinationAccount.slice(0, 3);
-  const candidates = directory.banks.filter((b: any) => b.bank_id.startsWith(prefix) && b.bank_id !== identity.bankId);
+  let candidates = directory.banks.filter((b: any) => b.bank_id.startsWith(prefix) && b.bank_id !== identity.bankId);
+  // If no bank matches by prefix, try all other banks (prefix may differ from bankId)
+  if (candidates.length === 0) {
+    candidates = directory.banks.filter((b: any) => b.bank_id !== identity.bankId);
+  }
   if (candidates.length === 0) throw new AppError(404, 'BANK_NOT_FOUND', `No bank for prefix '${prefix}'`);
 
   let destBank: any = null;
