@@ -44,6 +44,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 <button class="tab" onclick="showTab('accounts',this)">Kontod</button>
 <button class="tab" onclick="showTab('transfer',this)">Ülekanne</button>
 <button class="tab" onclick="showTab('lookup',this)">Konto otsing</button>
+<button class="tab" onclick="showTab('banks',this)">Pangad</button>
 </div>
 
 <div id="auth" class="section active">
@@ -126,6 +127,15 @@ button:disabled{opacity:.5;cursor:not-allowed}
 <button onclick="loadAllAccounts()">Laadi</button>
 <div id="allAccountsList" class="accounts-list"></div>
 </div>
+</div>
+</div>
+
+<div id="banks" class="section">
+<div class="card">
+<h2>Registreeritud pangad</h2>
+<button onclick="syncBanks()">Sünkroniseeri keskpangaga</button>
+<div class="result" id="syncResult"></div>
+<div id="banksList" class="accounts-list" style="margin-top:.5rem"></div>
 </div>
 </div>
 
@@ -286,7 +296,36 @@ async function loadAllAccounts() {
   ).join('');
 }
 
+async function syncBanks() {
+  const {status, data} = await api('/sync', {method:'POST'});
+  if (status === 200) {
+    show('syncResult', 'Sünkroniseeritud! ' + data.banks.length + ' panka, kursid uuendatud.');
+    renderBanksList(data.banks);
+  } else {
+    show('syncResult', data, true);
+  }
+}
+
+async function loadBanks() {
+  const {status, data} = await api('/banks');
+  if (status === 200) {
+    renderBanksList(data.banks);
+  }
+}
+
+function renderBanksList(banks) {
+  const list = document.getElementById('banksList');
+  if (!banks || !banks.length) {
+    list.innerHTML = '<div style="color:#94a3b8;font-size:.85rem">Panku ei leitud</div>';
+    return;
+  }
+  list.innerHTML = banks.map(b =>
+    '<div class="acc"><div><span class="bal">' + b.bankId + '</span> ' + b.name + '</div><div><span class="cur">' + b.address + '</span></div></div>'
+  ).join('');
+}
+
 loadBankInfo();
+loadBanks();
 </script>
 </body>
 </html>`;

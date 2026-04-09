@@ -26,6 +26,7 @@ import { AppError, isAppError, toErrorBody } from './errors.js';
 import type { KeyPair } from './keys.js';
 import { ensureKeyPair } from './keys.js';
 import { formatMoney, parseMoney } from './money.js';
+import { refreshBankDirectory, refreshExchangeRates } from './central-bank.js';
 import { createTransfer, getTransferStatus, receiveTransfer } from './transfers.js';
 import { html as uiHtml } from './ui.js';
 
@@ -164,6 +165,30 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
       bankId: identity.bank_id,
       bankPrefix: identity.bank_prefix,
       address: identity.address
+    };
+  });
+
+  app.post(`${config.apiPrefix}/sync`, { schema: {
+    tags: ['Admin'],
+    summary: 'Sync bank directory and exchange rates from central bank',
+  } }, async () => {
+    const directory = await refreshBankDirectory(db, config);
+    const rates = await refreshExchangeRates(db, config);
+    return {
+      banks: directory.banks.map((b: { bankId: string; name: string; address: string; status: string }) => ({ bankId: b.bankId, name: b.name, address: b.address, status: b.status })),
+      exchangeRates: rates.rates,
+      syncedAt: directory.lastSyncedAt
+    };
+  });
+
+  app.get(`${config.apiPrefix}/banks`, { schema: {
+    tags: ['Admin'],
+    summary: 'List registered banks from cached directory',
+  } }, async () => {
+    const cached = await refreshBankDirectory(db, config);
+    return {
+      banks: cached.banks.map((b: { bankId: string; name: string; address: string; status: string }) => ({ bankId: b.bankId, name: b.name, address: b.address, status: b.status })),
+      lastSyncedAt: cached.lastSyncedAt
     };
   });
 
