@@ -61,8 +61,8 @@ await app.register(swagger, {
 });
 await app.register(swaggerUi, { routePrefix: '/docs' });
 
-const proxy = async (serviceUrl: string, request: any, reply: any) => {
-  const url = `${serviceUrl}${request.url}`;
+const proxy = async (serviceUrl: string, request: any, reply: any, pathOverride?: string) => {
+  const url = `${serviceUrl}${pathOverride ?? request.url}`;
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (request.headers.authorization) headers.authorization = request.headers.authorization;
 
@@ -90,8 +90,8 @@ app.get('/health', { schema: { tags: ['System'], summary: 'Health check',
 } }, async (req, rep) => proxy(CB_SERVICE, req, rep));
 
 // Non-prefixed aliases for cross-bank interoperability (branch-bank spec paths are relative to bank address)
-app.get('/accounts/:accountNumber', { schema: false as any }, async (req, rep) => proxy(ACCOUNT_SERVICE, { ...req, url: `/api/v1${req.url}` } as any, rep));
-app.post('/transfers/receive', { schema: false as any }, async (req, rep) => proxy(TRANSFER_SERVICE, { ...req, url: `/api/v1${req.url}` } as any, rep));
+app.get('/accounts/:accountNumber', { schema: false as any }, async (req, rep) => proxy(ACCOUNT_SERVICE, req, rep, `/api/v1${req.url}`));
+app.post('/transfers/receive', { schema: false as any }, async (req, rep) => proxy(TRANSFER_SERVICE, req, rep, `/api/v1${req.url}`));
 
 // Fix #4: apiKey documented in response description + x-api-key header noted
 app.post('/api/v1/users', { schema: { tags: ['Users'], summary: 'Register a new user',
