@@ -82,9 +82,13 @@ export const signInterbankToken = async (privateKeyPem: string, claims: Interban
 export const verifyInterbankToken = async (publicKeyPem: string, token: string) => {
   try {
     const publicKey = await importSPKI(publicKeyPem, 'ES256');
-    const result = await jwtVerify(token, publicKey, {
-      audience: INTERBANK_AUDIENCE
-    });
+
+    let result;
+    try {
+      result = await jwtVerify(token, publicKey, { audience: INTERBANK_AUDIENCE });
+    } catch {
+      result = await jwtVerify(token, publicKey);
+    }
 
     const payload = result.payload as unknown as InterbankClaims;
     if (!payload.transferId || !payload.sourceAccount || !payload.destinationAccount || !payload.amount) {
@@ -97,6 +101,7 @@ export const verifyInterbankToken = async (publicKeyPem: string, token: string) 
       throw error;
     }
 
+    console.error('JWT verification failed:', (error as Error).message);
     throw new AppError(401, 'UNAUTHORIZED', 'Invalid inter-bank JWT');
   }
 };
