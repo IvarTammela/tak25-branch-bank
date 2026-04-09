@@ -10,9 +10,40 @@ const TRANSFER_SERVICE = process.env.TRANSFER_SERVICE_URL ?? 'http://localhost:8
 const CB_SERVICE = process.env.CB_SERVICE_URL ?? 'http://localhost:8085';
 const BANK_ADDRESS = process.env.BANK_ADDRESS ?? `http://localhost:${PORT}`;
 
-const app = Fastify({ logger: true });
+const app = Fastify({
+  logger: true,
+  ajv: { customOptions: { allErrors: true } }
+});
 
-const errorSchema = { type: 'object', properties: { code: { type: 'string' }, message: { type: 'string' } } } as const;
+// Disable body validation on gateway - services validate themselves
+app.addHook('preValidation', async (request) => {
+  // Skip Fastify's built-in body validation for proxy routes
+  if (request.url !== '/' && request.url !== '/health') {
+    (request as any).validationError = null;
+  }
+});
+
+// Fix #2: Ensure all errors use {code, message} format
+app.setErrorHandler((error: any, request, reply) => {
+  if (error.validation) {
+    return reply.status(400).send({ code: 'INVALID_REQUEST', message: error.message });
+  }
+  request.log.error({ err: error }, 'Gateway error');
+  return reply.status(500).send({ code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' });
+});
+
+const errorSchema = { type: 'object', required: ['code', 'message'], properties: { code: { type: 'string' }, message: { type: 'string' } } } as const;
+
+const transferResponseSchema = {
+  type: 'object', properties: {
+    transferId: { type: 'string' }, status: { type: 'string', enum: ['completed', 'failed', 'pending', 'failed_timeout'] },
+    sourceAccount: { type: 'string' }, destinationAccount: { type: 'string' },
+    amount: { type: 'string' }, convertedAmount: { type: 'string' },
+    exchangeRate: { type: 'string' }, rateCapturedAt: { type: 'string' },
+    timestamp: { type: 'string' }, errorMessage: { type: 'string' },
+    pendingSince: { type: 'string' }, nextRetryAt: { type: 'string' }, retryCount: { type: 'number' }
+  }
+} as const;
 
 await app.register(swagger, {
   openapi: {
@@ -35,7 +66,6 @@ const proxy = async (serviceUrl: string, request: any, reply: any) => {
       body: request.method !== 'GET' && request.method !== 'HEAD' ? JSON.stringify(request.body) : undefined
     });
     const text = await res.text();
-    // Copy x-api-key header if present
     const apiKey = res.headers.get('x-api-key');
     if (apiKey) reply.header('x-api-key', apiKey);
     reply.status(res.status).header('content-type', res.headers.get('content-type') ?? 'application/json').send(text);
@@ -47,28 +77,89 @@ const proxy = async (serviceUrl: string, request: any, reply: any) => {
 // UI
 app.get('/', async (request, reply) => { reply.header('content-type', 'text/html; charset=utf-8'); return reply.send(uiHtml); });
 
-// Health -> Central Bank Service
-app.get('/health', { schema: { tags: ['System'], summary: 'Health check' } }, async (req, rep) => proxy(CB_SERVICE, req, rep));
+// Fix #1: Health response schema matches actual response
+app.get('/health', { schema: { tags: ['System'], summary: 'Health check',
+  response: { 200: { type: 'object', properties: { status: { type: 'string' }, bankId: { type: 'string' }, bankPrefix: { type: 'string' }, address: { type: 'string' } } } }
+} }, async (req, rep) => proxy(CB_SERVICE, req, rep));
 
-// Users -> User Service
-app.post('/api/v1/users', { schema: { tags: ['Users'], summary: 'Register a new user', body: { type: 'object', required: ['fullName'], properties: { fullName: { type: 'string' }, email: { type: 'string' } } }, response: { 201: { type: 'object', properties: { userId: { type: 'string' }, fullName: { type: 'string' }, email: { type: 'string' }, createdAt: { type: 'string' } } }, 400: errorSchema, 409: errorSchema } } }, async (req, rep) => proxy(USER_SERVICE, req, rep));
-app.post('/api/v1/auth/tokens', { schema: { tags: ['Auth'], summary: 'Get Bearer token', body: { type: 'object', required: ['userId', 'apiKey'], properties: { userId: { type: 'string' }, apiKey: { type: 'string' } } }, response: { 200: { type: 'object', properties: { accessToken: { type: 'string' }, tokenType: { type: 'string' }, expiresIn: { type: 'number' } } }, 400: errorSchema, 401: errorSchema } } }, async (req, rep) => proxy(USER_SERVICE, req, rep));
-app.get('/api/v1/users/:userId', { schema: { tags: ['Users'], summary: 'Get user profile', security: [{ BearerAuth: [] }], params: { type: 'object', properties: { userId: { type: 'string' } } }, response: { 200: { type: 'object', properties: { userId: { type: 'string' }, fullName: { type: 'string' }, email: { type: 'string' }, createdAt: { type: 'string' } } }, 401: errorSchema, 403: errorSchema, 404: errorSchema } } }, async (req, rep) => proxy(USER_SERVICE, req, rep));
+// Fix #4: apiKey documented in response description + x-api-key header noted
+app.post('/api/v1/users', { schema: { tags: ['Users'], summary: 'Register a new user',
+  description: 'Registers a new user. API key is returned in the X-API-Key response header. Use it with POST /auth/tokens to get a Bearer token.',
+  body: { type: 'object', required: ['fullName'], properties: { fullName: { type: 'string', minLength: 2, maxLength: 200 }, email: { type: 'string', format: 'email' } } },
+  response: {
+    201: { type: 'object', description: 'User registered. Check X-API-Key response header for the API key.', properties: { userId: { type: 'string' }, fullName: { type: 'string' }, email: { type: 'string' }, createdAt: { type: 'string' } } },
+    400: errorSchema, 409: errorSchema }
+} }, async (req, rep) => proxy(USER_SERVICE, req, rep));
 
-// Accounts -> Account Service
-app.get('/api/v1/users/:userId/accounts', { schema: { tags: ['Accounts'], summary: 'List user accounts', security: [{ BearerAuth: [] }] } }, async (req, rep) => proxy(ACCOUNT_SERVICE, req, rep));
-app.post('/api/v1/users/:userId/accounts', { schema: { tags: ['Accounts'], summary: 'Create account', security: [{ BearerAuth: [] }], body: { type: 'object', required: ['currency'], properties: { currency: { type: 'string' } } }, response: { 201: { type: 'object', properties: { accountNumber: { type: 'string' }, ownerId: { type: 'string' }, currency: { type: 'string' }, balance: { type: 'string' }, createdAt: { type: 'string' } } }, 400: errorSchema, 401: errorSchema, 404: errorSchema } } }, async (req, rep) => proxy(ACCOUNT_SERVICE, req, rep));
-app.get('/api/v1/accounts', { schema: { tags: ['Accounts'], summary: 'List all accounts' } }, async (req, rep) => proxy(ACCOUNT_SERVICE, req, rep));
-app.get('/api/v1/accounts/:accountNumber', { schema: { tags: ['Accounts'], summary: 'Look up account (unauthenticated)', response: { 200: { type: 'object', properties: { accountNumber: { type: 'string' }, ownerName: { type: 'string' }, currency: { type: 'string' } } }, 400: errorSchema, 404: errorSchema } } }, async (req, rep) => proxy(ACCOUNT_SERVICE, req, rep));
-app.post('/api/v1/accounts/:accountNumber/deposit', { schema: { tags: ['Accounts'], summary: 'Deposit funds', security: [{ BearerAuth: [] }], body: { type: 'object', required: ['amount'], properties: { amount: { type: 'string' } } }, response: { 200: { type: 'object', properties: { accountNumber: { type: 'string' }, balance: { type: 'string' } } }, 400: errorSchema, 401: errorSchema, 403: errorSchema, 404: errorSchema } } }, async (req, rep) => proxy(ACCOUNT_SERVICE, req, rep));
+app.post('/api/v1/auth/tokens', { schema: { tags: ['Auth'], summary: 'Get Bearer token',
+  body: { type: 'object', required: ['userId', 'apiKey'], properties: { userId: { type: 'string' }, apiKey: { type: 'string' } } },
+  response: { 200: { type: 'object', properties: { accessToken: { type: 'string' }, tokenType: { type: 'string' }, expiresIn: { type: 'number' } } },
+    400: errorSchema, 401: errorSchema }
+} }, async (req, rep) => proxy(USER_SERVICE, req, rep));
 
-// Transfers -> Transfer Service
-app.post('/api/v1/transfers', { schema: { tags: ['Transfers'], summary: 'Initiate transfer', security: [{ BearerAuth: [] }], body: { type: 'object', required: ['transferId', 'sourceAccount', 'destinationAccount', 'amount'], properties: { transferId: { type: 'string', format: 'uuid' }, sourceAccount: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' } } }, response: { 201: { type: 'object', properties: { transferId: { type: 'string' }, status: { type: 'string' }, sourceAccount: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' }, convertedAmount: { type: 'string' }, exchangeRate: { type: 'string' }, timestamp: { type: 'string' } } }, 400: errorSchema, 401: errorSchema, 404: errorSchema, 409: errorSchema, 422: errorSchema, 503: errorSchema } } }, async (req, rep) => proxy(TRANSFER_SERVICE, req, rep));
-app.post('/api/v1/transfers/receive', { schema: { tags: ['Transfers'], summary: 'Receive inter-bank transfer (JWT)', body: { type: 'object', required: ['jwt'], properties: { jwt: { type: 'string' } } }, response: { 200: { type: 'object', properties: { transferId: { type: 'string' }, status: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' }, timestamp: { type: 'string' } } }, 401: errorSchema, 403: errorSchema, 404: errorSchema } } }, async (req, rep) => proxy(TRANSFER_SERVICE, req, rep));
-app.get('/api/v1/transfers/:transferId', { schema: { tags: ['Transfers'], summary: 'Get transfer status', security: [{ BearerAuth: [] }] } }, async (req, rep) => proxy(TRANSFER_SERVICE, req, rep));
-app.get('/api/v1/users/:userId/transfers', { schema: { tags: ['Transfers'], summary: 'List transfer history', security: [{ BearerAuth: [] }] } }, async (req, rep) => proxy(TRANSFER_SERVICE, req, rep));
+app.get('/api/v1/users/:userId', { schema: { tags: ['Users'], summary: 'Get user profile', security: [{ BearerAuth: [] }],
+  params: { type: 'object', properties: { userId: { type: 'string' } } },
+  response: { 200: { type: 'object', properties: { userId: { type: 'string' }, fullName: { type: 'string' }, email: { type: 'string' }, createdAt: { type: 'string' } } },
+    401: errorSchema, 403: errorSchema, 404: errorSchema }
+} }, async (req, rep) => proxy(USER_SERVICE, req, rep));
 
-// Admin -> Central Bank Service
+// Fix #7: Response schemas for list endpoints
+app.get('/api/v1/users/:userId/accounts', { schema: { tags: ['Accounts'], summary: 'List user accounts', security: [{ BearerAuth: [] }],
+  params: { type: 'object', properties: { userId: { type: 'string' } } },
+  response: { 200: { type: 'object', properties: { userId: { type: 'string' }, accounts: { type: 'array', items: { type: 'object', properties: { accountNumber: { type: 'string' }, currency: { type: 'string' }, balance: { type: 'string' }, createdAt: { type: 'string' } } } } } },
+    401: errorSchema, 403: errorSchema, 404: errorSchema }
+} }, async (req, rep) => proxy(ACCOUNT_SERVICE, req, rep));
+
+app.post('/api/v1/users/:userId/accounts', { schema: { tags: ['Accounts'], summary: 'Create account', security: [{ BearerAuth: [] }],
+  body: { type: 'object', required: ['currency'], properties: { currency: { type: 'string', pattern: '^[A-Z]{3}$', description: 'ISO 4217 (EUR, USD, GBP, SEK)' } } },
+  response: { 201: { type: 'object', properties: { accountNumber: { type: 'string' }, ownerId: { type: 'string' }, currency: { type: 'string' }, balance: { type: 'string' }, createdAt: { type: 'string' } } },
+    400: errorSchema, 401: errorSchema, 404: errorSchema }
+} }, async (req, rep) => proxy(ACCOUNT_SERVICE, req, rep));
+
+app.get('/api/v1/accounts', { schema: { tags: ['Accounts'], summary: 'List all accounts',
+  response: { 200: { type: 'object', properties: { accounts: { type: 'array', items: { type: 'object', properties: { accountNumber: { type: 'string' }, ownerName: { type: 'string' }, currency: { type: 'string' }, balance: { type: 'string' }, createdAt: { type: 'string' } } } } } } }
+} }, async (req, rep) => proxy(ACCOUNT_SERVICE, req, rep));
+
+app.get('/api/v1/accounts/:accountNumber', { schema: { tags: ['Accounts'], summary: 'Look up account (unauthenticated)',
+  params: { type: 'object', properties: { accountNumber: { type: 'string', pattern: '^[A-Z0-9]{8}$' } } },
+  response: { 200: { type: 'object', properties: { accountNumber: { type: 'string' }, ownerName: { type: 'string' }, currency: { type: 'string' } } },
+    400: errorSchema, 404: errorSchema }
+} }, async (req, rep) => proxy(ACCOUNT_SERVICE, req, rep));
+
+app.post('/api/v1/accounts/:accountNumber/deposit', { schema: { tags: ['Accounts'], summary: 'Deposit funds', security: [{ BearerAuth: [] }],
+  body: { type: 'object', required: ['amount'], properties: { amount: { type: 'string', pattern: '^\\d+\\.\\d{2}$', description: 'e.g. "100.00"' } } },
+  response: { 200: { type: 'object', properties: { accountNumber: { type: 'string' }, balance: { type: 'string' } } },
+    400: errorSchema, 401: errorSchema, 403: errorSchema, 404: errorSchema }
+} }, async (req, rep) => proxy(ACCOUNT_SERVICE, req, rep));
+
+// Fix #5: rateCapturedAt added to transfer response. Fix #6: transfer status has response schema
+app.post('/api/v1/transfers', { schema: { tags: ['Transfers'], summary: 'Initiate transfer', security: [{ BearerAuth: [] }],
+  body: { type: 'object', required: ['transferId', 'sourceAccount', 'destinationAccount', 'amount'], properties: { transferId: { type: 'string', format: 'uuid' }, sourceAccount: { type: 'string', pattern: '^[A-Z0-9]{8}$' }, destinationAccount: { type: 'string', pattern: '^[A-Z0-9]{8}$' }, amount: { type: 'string', pattern: '^\\d+\\.\\d{2}$' } } },
+  response: { 201: transferResponseSchema, 400: errorSchema, 401: errorSchema, 404: errorSchema, 409: errorSchema, 422: errorSchema, 503: errorSchema }
+} }, async (req, rep) => proxy(TRANSFER_SERVICE, req, rep));
+
+app.post('/api/v1/transfers/receive', { schema: { tags: ['Transfers'], summary: 'Receive inter-bank transfer (JWT)',
+  body: { type: 'object', required: ['jwt'], properties: { jwt: { type: 'string', description: 'ES256 signed JWT containing transfer details' } } },
+  response: { 200: { type: 'object', properties: { transferId: { type: 'string' }, status: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' }, timestamp: { type: 'string' } } },
+    401: errorSchema, 403: errorSchema, 404: errorSchema }
+} }, async (req, rep) => proxy(TRANSFER_SERVICE, req, rep));
+
+// Fix #6: transfer status response schema
+app.get('/api/v1/transfers/:transferId', { schema: { tags: ['Transfers'], summary: 'Get transfer status', security: [{ BearerAuth: [] }],
+  params: { type: 'object', properties: { transferId: { type: 'string', format: 'uuid' } } },
+  response: { 200: transferResponseSchema, 401: errorSchema, 403: errorSchema, 404: errorSchema }
+} }, async (req, rep) => proxy(TRANSFER_SERVICE, req, rep));
+
+// Fix #7: transfer history response schema
+app.get('/api/v1/users/:userId/transfers', { schema: { tags: ['Transfers'], summary: 'List transfer history', security: [{ BearerAuth: [] }],
+  params: { type: 'object', properties: { userId: { type: 'string' } } },
+  response: { 200: { type: 'object', properties: { transfers: { type: 'array', items: { type: 'object', properties: {
+    transferId: { type: 'string' }, direction: { type: 'string', enum: ['incoming', 'outgoing'] }, status: { type: 'string' },
+    sourceAccount: { type: 'string' }, destinationAccount: { type: 'string' }, amount: { type: 'string' }, currency: { type: 'string' },
+    convertedAmount: { type: 'string' }, exchangeRate: { type: 'string' }, errorMessage: { type: 'string' }, createdAt: { type: 'string' }
+  } } } } }, 401: errorSchema, 403: errorSchema }
+} }, async (req, rep) => proxy(TRANSFER_SERVICE, req, rep));
+
 app.post('/api/v1/sync', { schema: { tags: ['Admin'], summary: 'Sync with central bank' } }, async (req, rep) => proxy(CB_SERVICE, req, rep));
 app.get('/api/v1/banks', { schema: { tags: ['Admin'], summary: 'List registered banks' } }, async (req, rep) => proxy(CB_SERVICE, req, rep));
 

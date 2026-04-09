@@ -42,10 +42,10 @@ app.post('/api/v1/users', async (request, reply) => {
 });
 
 app.post('/api/v1/auth/tokens', async (request) => {
-  const parsed = tokenSchema.safeParse(request.body);
-  if (!parsed.success) throw new AppError(400, 'INVALID_REQUEST', parsed.error.issues[0]?.message ?? 'Invalid');
-  const user = getUserById(db, parsed.data.userId);
-  if (!user || hashApiKey(parsed.data.apiKey) !== user.api_key_hash) throw new AppError(401, 'UNAUTHORIZED', 'Invalid userId or API key');
+  const body = request.body as { userId?: string; apiKey?: string } | null;
+  if (!body?.userId || !body?.apiKey) throw new AppError(400, 'INVALID_REQUEST', 'userId and apiKey are required');
+  const user = getUserById(db, body.userId);
+  if (!user || hashApiKey(body.apiKey) !== user.api_key_hash) throw new AppError(401, 'UNAUTHORIZED', 'Invalid userId or API key');
   const token = await issueAccessToken(keys.privateKeyPem, BANK_NAME, user.id, TOKEN_TTL);
   return { accessToken: token, tokenType: 'Bearer', expiresIn: TOKEN_TTL };
 });
