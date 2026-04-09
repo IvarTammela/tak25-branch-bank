@@ -294,7 +294,11 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
   });
 
   app.get(`${config.apiPrefix}/accounts/:accountNumber`, async (request) => {
-    const params = z.object({ accountNumber: z.string().regex(/^[A-Z0-9]{8}$/) }).parse(request.params);
+    const raw = z.object({ accountNumber: z.string() }).parse(request.params);
+    if (!/^[A-Z0-9]{8}$/.test(raw.accountNumber)) {
+      throw new AppError(400, 'INVALID_ACCOUNT_NUMBER', 'Account number must be exactly 8 characters');
+    }
+    const params = raw;
     const account = getAccountByNumber(db, params.accountNumber);
     if (!account) {
       throw new AppError(404, 'ACCOUNT_NOT_FOUND', `Account with number '${params.accountNumber}' not found`);

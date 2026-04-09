@@ -406,6 +406,11 @@ export const getTransferStatus = (db: SqliteDatabase, transferId: string, userId
   }
 
   assertTransferOwnership(db, transfer, userId);
+
+  if (transfer.status === 'failed_timeout') {
+    throw new AppError(423, 'TRANSFER_TIMEOUT', 'Transfer has timed out and cannot be modified or retried. Status is failed_timeout with refund processed.');
+  }
+
   return buildTransferResponse(transfer);
 };
 
