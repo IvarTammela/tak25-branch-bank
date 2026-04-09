@@ -260,6 +260,15 @@ export const insertTransfer = (db: SqliteDatabase, transfer: TransferRow) => {
 export const getTransferById = (db: SqliteDatabase, transferId: string) =>
   db.prepare('SELECT * FROM transfers WHERE transfer_id = ?').get(transferId) as TransferRow | undefined;
 
+export const listTransfersByUser = (db: SqliteDatabase, userId: string) =>
+  db.prepare(`
+    SELECT * FROM transfers
+    WHERE initiated_by_user_id = ?
+       OR destination_account IN (SELECT account_number FROM accounts WHERE owner_id = ?)
+    ORDER BY created_at DESC
+    LIMIT 100
+  `).all(userId, userId) as TransferRow[];
+
 export const listDuePendingTransfers = (db: SqliteDatabase, nowIso: string) =>
   db.prepare(`
     SELECT * FROM transfers

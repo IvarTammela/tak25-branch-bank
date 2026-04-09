@@ -111,6 +111,9 @@ button:disabled{opacity:.5;cursor:not-allowed}
 <button onclick="doTransfer()">Saada ülekanne</button>
 <div class="result" id="txResult"></div>
 </div>
+<h2>Ülekannete ajalugu</h2>
+<button onclick="loadTransfers()" style="width:auto;margin-bottom:.5rem">Värskenda</button>
+<div id="transfersList" class="accounts-list"></div>
 </div>
 
 <div id="lookup" class="section">
@@ -294,6 +297,22 @@ async function loadAllAccounts() {
   list.innerHTML = data.accounts.map(a =>
     '<div class="acc"><div>' + a.accountNumber + ' <span class="cur">' + a.currency + '</span> - ' + a.ownerName + '</div><div class="bal">' + a.balance + '</div></div>'
   ).join('');
+}
+
+async function loadTransfers() {
+  if (!token) return;
+  const {data} = await api('/users/'+userId+'/transfers');
+  const list = document.getElementById('transfersList');
+  if (!data.transfers || !data.transfers.length) {
+    list.innerHTML = '<div style="color:#94a3b8;font-size:.85rem">Ülekandeid pole</div>';
+    return;
+  }
+  list.innerHTML = data.transfers.map(t => {
+    const dir = t.direction === 'incoming' ? '⬇ SISSE' : '⬆ VÄLJA';
+    const color = t.direction === 'incoming' ? '#4ade80' : '#f87171';
+    const conv = t.convertedAmount ? ' → ' + t.convertedAmount + ' (kurss: ' + t.exchangeRate + ')' : '';
+    return '<div class="acc" style="flex-direction:column;gap:2px"><div style="display:flex;justify-content:space-between"><span style="color:'+color+'">' + dir + ' ' + t.status + '</span><span class="bal">' + t.amount + ' ' + t.currency + conv + '</span></div><div style="font-size:.75rem;color:#64748b">' + t.sourceAccount + ' → ' + t.destinationAccount + ' | ' + t.createdAt.slice(0,19) + '</div></div>';
+  }).join('');
 }
 
 async function syncBanks() {

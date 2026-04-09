@@ -18,6 +18,7 @@ import {
   getUserById,
   listAccountsByOwner,
   listAllAccounts,
+  listTransfersByUser,
   migrateDatabase,
   openDatabase,
   type SqliteDatabase
@@ -449,6 +450,36 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
 
     const result = await createTransfer(db, config, keys, authenticatedUserId, parsed.data);
     return reply.status(201).send(result);
+  });
+
+  app.get(`${config.apiPrefix}/users/:userId/transfers`, { schema: {
+    tags: ['Transfers'],
+    summary: 'List transfer history',
+    security: [{ BearerAuth: [] }],
+    params: { type: 'object', properties: { userId: { type: 'string' } } }
+  } }, async (request) => {
+    const authenticatedUserId = await authenticateUser(request, config, keys);
+    const params = z.object({ userId: z.string() }).parse(request.params);
+
+    if (authenticatedUserId !== params.userId) {
+      throw new AppError(403, 'FORBIDDEN', 'You can only view your own transfers');
+    }
+
+    return {
+      transfers: listTransfersByUser(db, params.userId).map((t) => ({
+        transferId: t.transfer_id,
+        direction: t.direction,
+        status: t.status,
+        sourceAccount: t.source_account,
+        destinationAccount: t.destination_account,
+        amount: formatMoney(t.amount_minor),
+        currency: t.amount_currency,
+        convertedAmount: t.converted_amount_minor !== null ? formatMoney(t.converted_amount_minor) : undefined,
+        exchangeRate: t.exchange_rate ?? undefined,
+        errorMessage: t.error_message ?? undefined,
+        createdAt: t.created_at
+      }))
+    };
   });
 
   app.post(`${config.apiPrefix}/transfers/receive`, { schema: {
