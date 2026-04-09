@@ -1,129 +1,167 @@
 # TAK25 Branch Bank API
 
-Täielik harukontori API, mis realiseerib kasutajate registreerimise, kontode loomise, ülekanded, pankadevahelise JWT-põhise suhtluse ja keskpanga integratsiooni.
+Panga harukontori API hajutatud pangandussüsteemi jaoks. Toetab kasutajate registreerimist, kontode haldust, pangasiseseid ja pankadevahelisi ülekandeid ning keskpanga integratsiooni.
+
+## Live URL
+
+- **API:** http://46.62.166.124:8081
+- **Swagger UI:** http://46.62.166.124:8081/docs
+- **Web UI:** http://46.62.166.124:8081
+- **Bank ID:** AKB001 (prefiks AKB)
+
+Hetzner VPS, Node 22, systemd teenus.
 
 ## Kasutatud tehnoloogiad
 
-- Node.js 22
-- TypeScript
-- Fastify
-- SQLite (`better-sqlite3`)
-- JOSE (`ES256` JWT allkirjastamine ja verifitseerimine)
-- Docker Compose API + worker protsesside käivitamiseks
+| Tehnoloogia | Otstarve |
+|---|---|
+| Node.js 22 | Runtime |
+| TypeScript | Tüübitud kood |
+| Fastify | HTTP raamistik |
+| SQLite (better-sqlite3) | Andmebaas |
+| JOSE | ES256 JWT allkirjastamine ja verifitseerimine |
+| Zod | Sisendi valideerimine |
+| @fastify/swagger + swagger-ui | API dokumentatsioon |
+| Docker Compose | Konteineripõhine deploy |
 
 ## Mikroteenuste arhitektuur
 
-Lahendus on jagatud kaheks iseseisvalt käivitatavaks teenuseks:
+Süsteem koosneb kolmest iseseisvast komponendist:
 
-1. `branch-api`
-   Avalik HTTP API kasutajatele ja teistele pankadele.
-2. `bank-worker`
-   Taustaprotsess, mis:
-   - registreerib panga keskpangas,
-   - saadab heartbeat'e,
-   - sünkroniseerib pankade kataloogi,
-   - sünkroniseerib valuutakursse,
-   - töötleb pending pankadevahelisi ülekandeid.
+```
+┌─────────────────────────────────────────────────────┐
+│                    Kliendid                          │
+│         (Web UI, Swagger UI, curl, teised pangad)    │
+└──────────────┬──────────────────────┬───────────────┘
+               │                      │
+               ▼                      ▼
+┌──────────────────────┐  ┌──────────────────────────┐
+│   branch-api         │  │   bank-worker             │
+│   (HTTP server)      │  │   (taustaprotsess)        │
+│                      │  │                           │
+│ - /api/v1/users      │  │ - keskpanga registreering  │
+│ - /api/v1/accounts   │  │ - heartbeat (10 min)      │
+│ - /api/v1/transfers  │  │ - kataloogi sync (5 min)  │
+│ - /api/v1/sync       │  │ - kursside sync (5 min)   │
+│ - /transfers/receive │  │ - pending retry (15 sek)  │
+│ - /docs (Swagger)    │  │ - timeout refund (4h)     │
+└──────────┬───────────┘  └──────────┬────────────────┘
+           │                         │
+           ▼                         ▼
+┌─────────────────────────────────────────────────────┐
+│                  SQLite andmebaas                     │
+│  (WAL mode, busy_timeout, transaktsioonid)           │
+└─────────────────────────────────────────────────────┘
+           │
+           ▼
+┌─────────────────────────────────────────────────────┐
+│              Keskpank (väline API)                    │
+│  POST /banks, GET /banks, POST /heartbeat            │
+│  GET /exchange-rates                                 │
+└─────────────────────────────────────────────────────┘
+```
 
-Teenused on eraldi deployeritavad ja neid saab skaleerida sõltumatult. API teenus teenindab päringuid, worker haldab taustal integratsiooni- ja retry-loogikat.
+**Produkstioonis** (Hetzner) jooksevad API ja worker samas protsessis (`npm start`), kuna jagavad sama SQLite faili.
+
+**Docker Compose'iga** saab käivitada eraldi teenustena:
+- `branch-api` - HTTP API
+- `bank-worker` - taustaprotsess
+
+Iga teenus on iseseisvalt deployeritav ja skaleeritav.
 
 ## Andmebaasi skeem
 
-Peamised tabelid:
+```sql
+-- Kasutajad
+users (id TEXT PK, full_name TEXT, email TEXT UNIQUE, api_key_hash TEXT, created_at TEXT)
 
-- `users`
-  Kasutaja põhiandmed ja API võtme räsi.
-- `accounts`
-  Konto number, omanik, valuuta, saldo sentides.
-- `transfers`
-  Pangasisesed ja pankadevahelised ülekanded, staatus, retry väljad, kursid ja audit info.
-- `bank_identity`
-  Kohaliku panga identiteet, avalik võti, keskpanga `bankId` ja konto prefiks.
-- `bank_directory`
-  Keskpangast sünkroniseeritud pankade kataloog vahemäluna.
-- `exchange_rates`
-  Keskpanga kursid vahemäluna.
-- `settings`
-  Vahemälu metaandmed (`lastSyncedAt`, kursi timestamp).
+-- Kontod (saldo sentides, vältimaks ujukomaaritmeetika vigu)
+accounts (account_number TEXT PK, owner_id TEXT FK->users, currency TEXT, balance_minor INT, created_at TEXT)
 
-Kõik saldo muutused tehakse andmebaasi transaktsioonides.
+-- Ülekanded (pangasisesed ja pankadevahelised)
+transfers (transfer_id TEXT PK, direction TEXT, status TEXT, source_account TEXT,
+           destination_account TEXT, amount_minor INT, amount_currency TEXT,
+           source_currency TEXT, destination_currency TEXT, converted_amount_minor INT,
+           exchange_rate TEXT, rate_captured_at TEXT, error_message TEXT,
+           initiated_by_user_id TEXT, pending_since TEXT, next_retry_at TEXT,
+           retry_count INT, source_bank_id TEXT, destination_bank_id TEXT,
+           created_at TEXT, updated_at TEXT, locked_amount_minor INT)
 
-## Toetatud endpointid
+-- Panga identiteet (1 rida)
+bank_identity (id INT PK, bank_id TEXT, bank_prefix TEXT, public_key TEXT,
+               address TEXT, name TEXT, registered_at TEXT, expires_at TEXT)
 
-- `POST /api/v1/users` - kasutaja registreerimine
-- `POST /api/v1/auth/tokens` - Bearer tokeni hankimine
-- `GET /api/v1/users/{userId}` - kasutaja profiil
-- `GET /api/v1/users/{userId}/accounts` - kasutaja kontod
-- `POST /api/v1/users/{userId}/accounts` - konto loomine
-- `GET /api/v1/accounts` - kõik kontod
-- `GET /api/v1/accounts/{accountNumber}` - konto otsing (autentimata)
-- `POST /api/v1/accounts/{accountNumber}/deposit` - raha lisamine
-- `POST /api/v1/transfers` - ülekanne
-- `POST /api/v1/transfers/receive` - pankadevahelise ülekande vastuvõtt (JWT)
-- `GET /api/v1/transfers/{transferId}` - ülekande staatus
-- `GET /api/v1/users/{userId}/transfers` - ülekannete ajalugu
-- `POST /api/v1/sync` - keskpanga kataloogi sünkroniseerimine
-- `GET /api/v1/banks` - registreeritud pangad
-- `GET /health` - terviskontroll
+-- Keskpanga kataloog (vahemälu)
+bank_directory (bank_id TEXT PK, name TEXT, address TEXT, public_key TEXT,
+                last_heartbeat TEXT, status TEXT)
+
+-- Valuutakursid (vahemälu)
+exchange_rates (currency TEXT PK, rate TEXT, captured_at TEXT)
+
+-- Seaded (sync ajatemplid)
+settings (key TEXT PK, value TEXT)
+```
+
+Kõik saldo muutused tehakse SQLite transaktsioonides. WAL mode + busy_timeout tagavad samaaegse ligipääsu.
+
+## API endpointid
+
+### Kasutajahaldus
+| Meetod | Path | Auth | Kirjeldus |
+|---|---|---|---|
+| POST | /api/v1/users | - | Registreeri kasutaja |
+| POST | /api/v1/auth/tokens | - | Hangi Bearer token |
+| GET | /api/v1/users/{userId} | Bearer | Kasutaja profiil |
+
+### Kontohaldus
+| Meetod | Path | Auth | Kirjeldus |
+|---|---|---|---|
+| POST | /api/v1/users/{userId}/accounts | Bearer | Loo konto |
+| GET | /api/v1/users/{userId}/accounts | Bearer | Kasutaja kontod |
+| GET | /api/v1/accounts/{accountNumber} | - | Konto otsing |
+| GET | /api/v1/accounts | - | Kõik kontod |
+| POST | /api/v1/accounts/{accountNumber}/deposit | Bearer | Raha lisamine |
+
+### Ülekanded
+| Meetod | Path | Auth | Kirjeldus |
+|---|---|---|---|
+| POST | /api/v1/transfers | Bearer | Alusta ülekannet |
+| GET | /api/v1/transfers/{transferId} | Bearer | Ülekande staatus |
+| GET | /api/v1/users/{userId}/transfers | Bearer | Ülekannete ajalugu |
+| POST | /api/v1/transfers/receive | JWT | Pankadevahelise ülekande vastuvõtt |
+
+### Admin
+| Meetod | Path | Auth | Kirjeldus |
+|---|---|---|---|
+| POST | /api/v1/sync | - | Sünkroniseeri keskpangaga |
+| GET | /api/v1/banks | - | Registreeritud pangad |
+| GET | /health | - | Terviskontroll |
 
 ## Bearer autentimine
 
-1. Registreeri kasutaja `POST /api/v1/users` abil.
-2. Loetud vastuse päisest `x-api-key` API võti.
-3. Küsi Bearer tokenit:
+1. Registreeri kasutaja:
+```bash
+curl -i -X POST http://46.62.166.124:8081/api/v1/users \
+  -H 'content-type: application/json' \
+  -d '{"fullName":"Jane Doe","email":"jane@example.com"}'
+```
+Vastuse päisest `x-api-key` kopeeri API võti.
 
+2. Hangi token:
 ```bash
 curl -X POST http://46.62.166.124:8081/api/v1/auth/tokens \
   -H 'content-type: application/json' \
   -d '{"userId":"user-...","apiKey":"..."}'
 ```
 
-4. Kasuta vastuses saadud `accessToken` väärtust `Authorization: Bearer ...` päises.
-
-## Käivitamine
-
-1. Paigalda sõltuvused:
-
+3. Kasuta tokenit:
 ```bash
-npm install
-```
-
-2. Loo konfiguratsioon:
-
-```bash
-cp .env.example .env
-```
-
-3. Käivita API:
-
-```bash
-npm start
-```
-
-4. Käivita worker teises terminalis:
-
-```bash
-npm run start:worker
-```
-
-## Docker Compose
-
-```bash
-docker compose up --build
+curl -H "Authorization: Bearer <accessToken>" http://46.62.166.124:8081/api/v1/users/<userId>/accounts
 ```
 
 ## Näidispäringud
 
-Kasutaja registreerimine:
-
-```bash
-curl -i -X POST http://46.62.166.124:8081/api/v1/users \
-  -H 'content-type: application/json' \
-  -d '{"fullName":"Jane Doe","email":"jane@example.com"}'
-```
-
 Konto loomine:
-
 ```bash
 curl -X POST http://46.62.166.124:8081/api/v1/users/$USER_ID/accounts \
   -H "Authorization: Bearer $TOKEN" \
@@ -131,75 +169,84 @@ curl -X POST http://46.62.166.124:8081/api/v1/users/$USER_ID/accounts \
   -d '{"currency":"EUR"}'
 ```
 
-Konto kontrollimine:
-
+Raha lisamine:
 ```bash
-curl http://46.62.166.124:8081/api/v1/accounts/ESTABCDE
+curl -X POST http://46.62.166.124:8081/api/v1/accounts/AKB12345/deposit \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"amount":"100.00"}'
 ```
 
-Ülekande algatamine:
-
+Ülekanne (pangasisene):
 ```bash
 curl -X POST http://46.62.166.124:8081/api/v1/transfers \
   -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{
     "transferId":"550e8400-e29b-41d4-a716-446655440000",
-    "sourceAccount":"ESTAAAAA",
-    "destinationAccount":"LATBBBBB",
+    "sourceAccount":"AKB12345",
+    "destinationAccount":"AKB67890",
     "amount":"25.00"
   }'
 ```
 
-Ülekande staatuse küsimine:
-
+Konto otsing (autentimata):
 ```bash
-curl http://46.62.166.124:8081/api/v1/transfers/550e8400-e29b-41d4-a716-446655440000 \
-  -H "Authorization: Bearer $TOKEN"
+curl http://46.62.166.124:8081/api/v1/accounts/AKB12345
 ```
 
 ## Keskpanga integratsioon
 
-Worker kasutab järgmisi keskpanga endpoint'e:
+Worker suhtleb keskpangaga (`https://test.diarainfra.com/central-bank/api/v1`):
 
-- `POST /banks`
-- `GET /banks`
-- `POST /banks/{bankId}/heartbeat`
-- `GET /exchange-rates`
+| Endpoint | Sagedus | Otstarve |
+|---|---|---|
+| POST /banks | Käivitusel | Panga registreerimine |
+| POST /banks/{bankId}/heartbeat | 10 min | Registreerimise säilitamine (30 min timeout) |
+| GET /banks | 5 min | Pankade kataloogi sünkroniseerimine |
+| GET /exchange-rates | 5 min | Valuutakursside uuendamine |
 
-Rahvusvahelistes ülekannetes allkirjastatakse JWT `ES256` algoritmiga ning vastuvõttev pank verifitseerib signatuuri keskpanga kataloogist saadud avaliku võtme abil.
+Pankadevahelistes ülekannetes allkirjastatakse JWT ES256 algoritmiga. Vastuvõttev pank verifitseerib signatuuri keskpanga kataloogist saadud avaliku võtme abil.
 
 ## Ülekannete töötlus
 
-- Pangasisene ülekanne: kohe transaktsioonis debiteerimine + krediteerimine.
-- Pankadevaheline ülekanne:
-  - lähtekontolt raha lukustatakse kohe,
-  - sihtpanka üritatakse kohe kutsuda,
-  - ajutise vea korral jääb staatus `pending`,
-  - worker teeb exponential backoff retry,
-  - 4 tunni järel märgitakse `failed_timeout` ja raha tagastatakse.
+**Pangasisene ülekanne:**
+- Kohe transaktsioonis debiteerimine + krediteerimine
+- Valuutakonversioon keskpanga kursside alusel
+
+**Pankadevaheline ülekanne:**
+1. Lähtekontolt raha lukustatakse kohe
+2. Sihtpanka üritatakse kohe JWT-ga kutsuda
+3. Ajutise vea korral jääb staatus `pending`
+4. Worker teeb exponential backoff retry (1min, 2min, 4min, ... kuni 1h)
+5. 4 tunni järel märgitakse `failed_timeout` ja raha tagastatakse
+
+**Idempotentsus:** Duplikaat `transferId` tagastab 409.
+
+## Käivitamine
+
+```bash
+npm install
+cp .env.example .env
+# Muuda .env failis BANK_ADDRESS ja CENTRAL_BANK_BASE_URL
+npm start
+```
+
+Eraldi workeriga (Docker Compose):
+```bash
+docker compose up --build
+```
 
 ## Testimine
-
-Automaatsete testide käivitamine:
 
 ```bash
 npm test
 ```
 
 Kaetud stsenaariumid:
+- Kasutaja registreerimine ja API võtme väljastus
+- Bearer tokeni loomine ja verifitseerimine
+- Pangasisene ülekanne saldo muutustega
+- Pankadevahelise ES256 JWT vastuvõtmine ja verifitseerimine
 
-- kasutaja registreerimine ja API võtme väljastus,
-- Bearer tokeni loomine,
-- pangasisene ülekanne,
-- pankadevahelise JWT vastuvõtmine ja verifitseerimine.
-
-## Live URL
-
-- API: http://46.62.166.124:8081
-- Swagger UI: http://46.62.166.124:8081/docs
-- Web UI: http://46.62.166.124:8081
-
-Hetzner VPS, Node 22, systemd teenus. Bank ID: AKB001.
-
-Hetzner VPS, Node 22, systemd teenus. Swagger UI: http://46.62.166.124:8081/docs
+Täielik integratsioonitesti tulemused (28 endpointi): kõik läbivad.

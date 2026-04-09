@@ -7,10 +7,15 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "tsx src/server.ts",
+    "start": "bash start-all.sh",
+    "start:gateway": "tsx src/gateway/server.ts",
+    "start:user-service": "tsx src/user-service/server.ts",
+    "start:account-service": "tsx src/account-service/server.ts",
+    "start:transfer-service": "tsx src/transfer-service/server.ts",
+    "start:central-bank-service": "tsx src/central-bank-service/server.ts",
+    "start:monolith": "tsx src/server.ts",
     "start:worker": "tsx src/worker.ts",
     "dev": "tsx watch src/server.ts",
-    "dev:worker": "tsx watch src/worker.ts",
     "test": "tsx --test tests/**/*.test.ts"
   },
   "dependencies": {
