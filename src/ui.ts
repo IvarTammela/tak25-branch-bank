@@ -40,10 +40,10 @@ button:disabled{opacity:.5;cursor:not-allowed}
 <div class="info" id="bankInfo">Loading...</div>
 
 <div class="tabs">
-<button class="tab active" onclick="showTab('auth')">Sisselogimine</button>
-<button class="tab" onclick="showTab('accounts')">Kontod</button>
-<button class="tab" onclick="showTab('transfer')">Ülekanne</button>
-<button class="tab" onclick="showTab('lookup')">Konto otsing</button>
+<button class="tab active" onclick="showTab('auth',this)">Sisselogimine</button>
+<button class="tab" onclick="showTab('accounts',this)">Kontod</button>
+<button class="tab" onclick="showTab('transfer',this)">Ülekanne</button>
+<button class="tab" onclick="showTab('lookup',this)">Konto otsing</button>
 </div>
 
 <div id="auth" class="section active">
@@ -150,16 +150,18 @@ function show(id, text, isErr) {
   el.className = 'result show' + (isErr ? ' err' : '');
 }
 
-function showTab(name) {
+function showTab(name, el) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById(name).classList.add('active');
-  event.target.classList.add('active');
+  if (el) el.classList.add('active');
+  else document.querySelector('.tab[onclick*="'+name+'"]')?.classList.add('active');
 }
 
 async function loadBankInfo() {
   try {
-    const {data} = await api('/../health');
+    const res = await fetch(window.location.origin + '/health');
+    const data = await res.json();
     document.getElementById('bankInfo').innerHTML =
       'Bank: <span>' + (data.bankId||'?') + '</span> | Prefiks: <span>' + (data.bankPrefix||'?') + '</span> | Aadress: <span>' + (data.address||'?') + '</span>';
   } catch {}
@@ -194,8 +196,6 @@ async function login() {
     show('loginResult', 'Token saadud, kehtib ' + data.expiresIn + 's');
     loadAccounts();
     showTab('accounts');
-    document.querySelectorAll('.tab')[1].classList.add('active');
-    document.querySelectorAll('.tab')[0].classList.remove('active');
   } else {
     show('loginResult', data, true);
   }
