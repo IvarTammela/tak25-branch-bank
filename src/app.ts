@@ -17,6 +17,7 @@ import {
   getUserByEmail,
   getUserById,
   listAccountsByOwner,
+  listAllAccounts,
   migrateDatabase,
   openDatabase,
   type SqliteDatabase
@@ -345,6 +346,21 @@ export const buildApp = async (config: AppConfig): Promise<BranchApp> => {
       balance: '0.00',
       createdAt
     });
+  });
+
+  app.get(`${config.apiPrefix}/accounts`, { schema: {
+    tags: ['Accounts'],
+    summary: 'List all accounts',
+  } }, async () => {
+    return {
+      accounts: listAllAccounts(db).map((row) => ({
+        accountNumber: row.account_number,
+        ownerName: row.full_name,
+        currency: row.currency,
+        balance: formatMoney(row.balance_minor),
+        createdAt: row.created_at
+      }))
+    };
   });
 
   app.get(`${config.apiPrefix}/accounts/:accountNumber`, { schema: {

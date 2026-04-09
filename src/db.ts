@@ -228,6 +228,9 @@ export const getAccountByNumber = (db: SqliteDatabase, accountNumber: string) =>
 export const listAccountsByOwner = (db: SqliteDatabase, ownerId: string) =>
   db.prepare('SELECT * FROM accounts WHERE owner_id = ? ORDER BY created_at ASC').all(ownerId) as AccountRow[];
 
+export const listAllAccounts = (db: SqliteDatabase) =>
+  db.prepare('SELECT a.*, u.full_name FROM accounts a JOIN users u ON a.owner_id = u.id ORDER BY a.created_at ASC').all() as (AccountRow & { full_name: string })[];
+
 export const setAccountBalance = (db: SqliteDatabase, accountNumber: string, balanceMinor: number) => {
   db.prepare('UPDATE accounts SET balance_minor = ? WHERE account_number = ?').run(balanceMinor, accountNumber);
 };
