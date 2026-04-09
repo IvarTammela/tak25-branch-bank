@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: tak25-branch-bank
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: HOST
+        value: "0.0.0.0"
+      - key: PORT
+        value: "10000"
+      - key: DB_PATH
+        value: "./data/branch-bank.db"
+      - key: KEY_DIR
+        value: "./data/keys"
+      - key: BANK_NAME
+        value: "TAK25 Branch Bank"
+      - key: BANK_ADDRESS
+        sync: false
+      - key: CENTRAL_BANK_BASE_URL
+        value: "https://test.diarainfra.com/central-bank/api/v1"
+      - key: SUPPORTED_CURRENCIES
+        value: "EUR,USD,GBP,SEK"
+      - key: ACCESS_TOKEN_TTL_SECONDS
+        value: "3600"
+      - key: HEARTBEAT_INTERVAL_MS
+        value: "600000"
+      - key: DIRECTORY_SYNC_INTERVAL_MS
+        value: "300000"
+      - key: RETRY_POLL_INTERVAL_MS
+        value: "15000"
