@@ -93,6 +93,11 @@ app.get('/health', { schema: { tags: ['System'], summary: 'Health check',
 app.get('/accounts/:accountNumber', { schema: false as any }, async (req, rep) => proxy(ACCOUNT_SERVICE, req, rep, `/api/v1${req.url}`));
 app.post('/transfers/receive', { schema: false as any }, async (req, rep) => proxy(TRANSFER_SERVICE, req, rep, `/api/v1${req.url}`));
 
+// Also expose /api/v1/health so external central bank's health probe passes
+// for a /api/v1-suffixed BANK_ADDRESS registration.
+app.get('/api/v1/health', { schema: { tags: ['System'], summary: 'Health check (prefixed)' } },
+  async (req, rep) => proxy(CB_SERVICE, req, rep));
+
 // Fix #4: apiKey documented in response description + x-api-key header noted
 app.post('/api/v1/users', { schema: { tags: ['Users'], summary: 'Register a new user',
   description: 'Registers a new user. API key is returned in the X-API-Key response header. Use it with POST /auth/tokens to get a Bearer token.',
