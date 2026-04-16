@@ -7,7 +7,7 @@ Panga harukontori API hajutatud pangandussüsteemi jaoks. Toetab kasutajate regi
 - **API:** http://46.62.166.124:8081
 - **Swagger UI:** http://46.62.166.124:8081/docs
 - **Web UI:** http://46.62.166.124:8081
-- **Bank ID:** AKB001 (prefiks AKB)
+- **Bank ID:** BRA001 (prefiks BRA)
 
 ## Kasutatud tehnoloogiad
 
@@ -218,7 +218,7 @@ curl -X POST http://46.62.166.124:8081/api/v1/transfers \
   -H 'content-type: application/json' \
   -d '{
     "transferId":"550e8400-e29b-41d4-a716-446655440000",
-    "sourceAccount":"AKB12345",
+    "sourceAccount":"BRA12345",
     "destinationAccount":"TAK67890",
     "amount":"25.00"
   }'
