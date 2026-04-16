@@ -94,9 +94,9 @@ app.get('/accounts/:accountNumber', { schema: false as any }, async (req, rep) =
 app.post('/transfers/receive', { schema: false as any }, async (req, rep) => proxy(TRANSFER_SERVICE, req, rep, `/api/v1${req.url}`));
 
 // Also expose /api/v1/health so external central bank's health probe passes
-// for a /api/v1-suffixed BANK_ADDRESS registration.
+// for a /api/v1-suffixed BANK_ADDRESS registration. Rewrites to /health on CB service.
 app.get('/api/v1/health', { schema: { tags: ['System'], summary: 'Health check (prefixed)' } },
-  async (req, rep) => proxy(CB_SERVICE, req, rep));
+  async (req, rep) => proxy(CB_SERVICE, req, rep, '/health'));
 
 // Fix #4: apiKey documented in response description + x-api-key header noted
 app.post('/api/v1/users', { schema: { tags: ['Users'], summary: 'Register a new user',
